@@ -7,7 +7,7 @@
 - `main` 为稳定主分支。禁止直接在 main 开发、提交或推送，禁止强制推送 main。
 - 每个工作分支从最新 main 创建，围绕一个可审查任务；不创建多人长期共用的个人分支。
 - `dev/` 是开发文档目录；当前不设同名集成分支，PR 的目标为 main。
-- 团队分支格式为 `<type>/<issue>-<short-description>`；自动化助手使用 `codex/<issue>-<short-description>`。
+- 团队分支格式为 `<type>/<issue>-<short-description>`，成员及自动化助手遵循同一套命名规则。
 
 | 类型 | 用途 | 示例（编号仅为示例） |
 | --- | --- | --- |
@@ -16,7 +16,6 @@
 | docs | 文档 | docs/44-api-spec |
 | refactor | 不改变行为的重构 | refactor/45-retrieval-adapter |
 | chore | 依赖、构建和维护 | chore/46-python-tooling |
-| codex | Codex 执行的任务 | codex/47-project-docs |
 
 ## Issue 规范
 

@@ -1,47 +1,95 @@
 # CareerPilot 技术架构
 
-状态：v0.1 建议初稿，尚未完成选型验证或实现。负责人拥有架构决策权；各成员通过 Issue 提交变更理由、影响和迁移方式。
+状态：v0.2 技术与部署设计基线，尚未实现或完成云端验证。负责人拥有架构决策权；各成员记录变更理由、影响和迁移方式。
 
 ## 建议技术方案
 
 | 层次 | 建议方案 | 决策理由及待验证项 |
 | --- | --- | --- |
-| Web 前端 | React + TypeScript | 类型化接口与组件复用；版本在搭建时锁定 |
-| 业务 API | Python + FastAPI | 与文档解析及 Agent 模块共享语言，减少跨服务联调 |
-| 应用数据 | MongoDB 托管实例 | 保存用户、文档元数据、JD、任务、计划及面试；符合课程托管 NoSQL 方向 |
-| 向量索引 | Qdrant，经独立适配器访问 | 与业务数据库分离；先验证托管或容器运行、过滤能力和删除同步 |
-| 文件存储 | 私有对象存储；本地开发使用被忽略的目录 | 原文件不进入代码仓库，不通过公开静态目录暴露 |
-| 模型与嵌入 | 可替换 Provider 适配器 | 模型、维度、用量与地域可用性由原型验证，密钥只在服务端 |
-| 部署 | 前端静态托管 + API/Worker 容器 | 负责人验证 HTTPS、私有存储、数据库和索引连通性 |
+| Web 前端 | React + TypeScript + SSE | 展示工具执行进度、补充信息请求和结果；SSE 断开后通过事件回放及任务查询恢复 |
+| 业务 API | Python + FastAPI + Pydantic | 与 RAG、Agent 共享语言；明确输入输出类型、用户权限及幂等边界 |
+| Agent 编排 | LangGraph + Tool Calling + 持久化 Checkpoint | 表达岗位分析、资料追问、计划确认与恢复；单 Agent，不另建多 Agent 集群 |
+| RAG 检索 | Qdrant + 稠密/关键词混合检索 + Rerank | 先建立向量检索基线，再实测混合检索和重排序收益；按用户、版本过滤 |
+| 应用数据 | 托管 MongoDB 副本集 | 保存业务记录和执行状态，支持计划确认事务；优先验证同地域阿里云 MongoDB 实例 |
+| 后台任务 | Celery + Redis Broker | 分发解析、索引及 Agent 执行任务；MongoDB 保留权威状态，Redis 不承担业务主库职责 |
+| 文件存储 | 阿里云 OSS 私有 Bucket | 保存原文件及版本化解析文本；本地适配器使用被忽略的目录 |
+| 模型服务 | 独立的生成、Embedding、Rerank Provider 适配器 | 三类服务可分别替换；通过 API 调用，初期 ECS 不承载本地大模型推理 |
+| 部署 | 阿里云 ECS + Docker Compose + Nginx/HTTPS | Nginx 提供前端静态文件及 API 反向代理，ECS 运行 API、Worker、Redis、Qdrant 等服务 |
+| 持续集成与发布 | GitHub Actions 检查与构建；负责人手动触发 ECS 发布 | PR 检查、main 镜像构建与正式发布分开；CI/CD 在脚手架阶段实现，当前没有已运行的流水线 |
+| 评测与观察 | 固定验收集、结构化运行事件；Langfuse 为可选接入 | 跟踪证据、工具调用、耗时和用量；对外追踪默认不发送个人简历或回答正文 |
 
-初期使用一个 Python 代码库划分业务、Agent、RAG、Worker 模块，不把每个模块拆成微服务。异步任务数据保存在 MongoDB；API 负责创建任务，Worker 使用原子状态更新领取任务，避免仅依赖进程内后台任务造成重启丢失。
+使用一个 Python 代码库划分业务、Agent、RAG、Worker 和任务分发模块，不按模块建立微服务。先完成核心流程，再补齐队列恢复、混合检索、SSE 与发布能力；部署和组件引入顺序见 05。版本与资源规格须通过原型验证后锁定，当前不承诺费用和性能数字。
 
 ## 系统边界
 
 ```mermaid
 flowchart LR
-    U[用户] --> F[Web 前端 A]
-    F --> API[业务 API B]
-    API --> DB[(MongoDB)]
-    API --> S[(私有文件存储)]
-    API --> J[持久化任务]
-    J --> W[Worker]
+    U[用户浏览器]
+    subgraph ECS[阿里云 ECS / Docker Compose]
+    N[Nginx / HTTPS] --> F[React 静态文件 A]
+    N --> API[FastAPI / SSE B]
+    API --> O[Outbox 分发器 B]
+    O --> Q[(Redis Broker)]
+    Q --> W[Celery Worker]
     W --> R[RAG 模块 C]
-    W --> AG[Agent 模块 D]
+    W --> AG[LangGraph Agent D]
     AG --> R
-    R --> V[(向量索引)]
-    AG --> L[模型适配器]
+    R --> V[(Qdrant)]
+    end
+    U --> N
+    API --> DB[(托管 MongoDB)]
+    O --> DB
+    W --> DB
+    AG --> CP[(MongoDB Checkpoint)]
+    API --> S[(私有 OSS)]
+    W --> S
+    R --> M[Embedding / Rerank API]
+    AG --> L[生成模型 API]
+    W --> E[持久化业务事件]
+    E --> API
 ```
+
+图中 Checkpoint 与业务数据可位于同一托管 MongoDB 实例的独立逻辑库；不是必须另购一个实例。业务事件保存在 MongoDB，图中单列用于说明 SSE 的读取来源。前端访问同域 `/api/v1`，避免在浏览器暴露数据库和模型服务地址。
+
+## Qdrant 在 RAG 中的作用
+
+Qdrant 是向量检索引擎：保存文档片段对应的向量和元数据，返回与查询相关的候选片段。Embedding 模型负责将文本转成向量，Rerank 模型对候选片段重新排序，生成模型结合检索证据作答。Qdrant 不替代这三类模型。
+
+| 组件 | 保存或处理的内容 | 项目示例 |
+| --- | --- | --- |
+| MongoDB | 权威业务数据、可引用片段、任务、计划、文档版本与原文位置 | 某用户的分析结果和计划状态 |
+| 私有 OSS | 原始简历、项目说明、版本化解析文本 | resume.pdf 及提取文本对象 |
+| Qdrant | 稠密向量、关键词稀疏表示及片段元数据，可重建 | chunk_id、user_id、document_id、version、corpus |
+| Embedding / Rerank / 生成模型 | 转换向量、候选排序、基于证据生成结论 | 从经历中检索相关片段，再核对是否支持 JD 要求 |
+
+例如，岗位写“后端性能优化”，项目资料写“使用 Redis 缓存热门查询”。检索可找到相关候选经历；Agent 仍需核对原文，不能仅凭向量相似度断言用户具备该能力。
+
+文档入库流程：解析 → 切分 → 记录来源位置 → 生成 Embedding 与关键词索引 → 写入 Qdrant → 发布可检索版本。查询流程：构造查询 → 权限/版本过滤 → 稠密与关键词召回 → RRF 融合 → 可选 Rerank → 取原文证据 → 生成引用答案。个人经历和公共面试知识分别检索，不能混作个人能力证据。
+
+先比较向量基线、混合检索、混合检索加 Rerank 的效果与耗时，再决定默认启用策略。模型、切分参数和检索配置随评测记录版本；Milvus 可作为未来适配器选项，本期不同时维护两套向量库。
 
 ## 两条数据流
 
 ### 资料入库
 
-API 验证文件与用户 → 私有存储 → documents 记录 → 索引任务 → C 解析和切分 → 写入可引用片段及向量 → 标记 ready。只有全部成功的版本才可检索。失败标记原因，保留可重试状态；删除使用 deleted_at 先阻断访问，再清理副本。
+API 验证文件与用户 → 写入私有 OSS → MongoDB 创建 documents、executions 和待分发记录 → Celery/Redis 分发 → C 解析、切分和建立索引 → 标记 ready。只有全部成功的版本才可检索。重试按文档 ID 与版本幂等更新片段和向量；删除先阻断查询，再异步清理 OSS、片段及 Qdrant 副本。
 
 ### 分析与计划
 
-API 验证用户和资料版本 → 创建分析任务 → D 拆解 JD → C 检索个人经历及公共知识 → D 生成结构化匹配结果 → 校验证据 ID 和版本 → 保存分析。计划生成使用独立异步任务；用户确认后由 API 事务性地创建计划任务。Agent 不直接执行任意数据库操作。
+API 验证用户和资料版本 → 创建分析任务 → Celery Worker 启动 LangGraph → 拆解 JD → C 检索 → 校验证据 → 输出结构化分析。资料缺失时可通过 interrupt 暂停，由用户补充后恢复；用户也可选择保留“资料未体现”的结论继续。
+
+计划生成使用独立执行任务：生成并保存 draft → interrupt 等待确认 → API 验证约束和版本 → 事务性创建正式任务、确认计划并记录恢复指令 → 恢复图执行并完成。计划确认后的重试不得重复创建任务。Agent 只通过白名单工具和业务服务操作，不直接执行任意数据库命令。
+
+LangGraph 使用持久化 Checkpoint；先验证 MongoDBSaver 与选定实例、驱动版本的兼容性。thread_id 由服务端生成并绑定用户和 execution，前端不能任意指定图线程。等待用户时释放 Worker，不占用一个 Celery 进程持续等待。
+
+## 队列、状态和实时事件
+
+- MongoDB executions 是任务状态权威来源，Celery task_id 只标识投递。前端不直接把 Celery SUCCESS 当作业务完成。
+- 任务记录与 dispatch_events 在同一事务中写入；分发器将待分发指令送到 Redis，记录发布结果，失败可重试。它只负责投递，不恢复旧版“MongoDB 领取任务执行”的并行调度方式。
+- 队列按至少一次投递设计。Worker 通过 execution_id、dispatch_id 和状态版本认领执行；已处理指令直接返回，索引及确认工具幂等。重复的外部模型调用仍可能发生，不能宣称 exactly-once。
+- Worker 使用限时运行租约，重启后由恢复流程重新分发过期运行指令；Celery 确认和 Redis 可见性超时必须按实际任务上限联调验证。
+- 业务事件在 MongoDB 持久化后通过 SSE 发给前端。断线通过 after_event_id 回放，必要时查询任务快照；Redis Pub/Sub 不能作为唯一进度来源。
+- SSE 使用支持 Authorization 请求头的 fetch 流；不把令牌放进 URL。P0 传输阶段进度、等待输入和最终状态，token 级输出可后续扩展，不展示隐藏推理过程。
 
 ## C 与 D 的内部契约
 
@@ -50,12 +98,14 @@ API 验证用户和资料版本 → 创建分析任务 → D 拆解 JD → C 检
 ```text
 retrieve_evidence(user_id, query, corpus, document_versions, top_k)
   -> {evidence: [{chunk_id, document_id, version, locator, quote,
-                  source_type, retrieval_score}], warnings: []}
+                  source_type, retrieval_score}], retrieval_config_version,
+     warnings: []}
 
 run_analysis(user_id, job_id, document_versions)
   -> {requirements: [{id, text, category, status,
                       evidence_ids, explanation, missing_information}],
       warnings: [], trace_id}
+  或暂停为 waiting_for_input（继续接口见 04）
 
 generate_plan(user_id, analysis_id, deadline, timezone, daily_minutes)
   -> {tasks: [{title, requirement_ids, scheduled_date,
@@ -70,11 +120,12 @@ generate_plan(user_id, analysis_id, deadline, timezone, daily_minutes)
 
 ## 执行状态与预算
 
-- 任务：queued → running → succeeded / failed；达到上限返回明确错误，不伪装为成功。
-- Worker 领取任务设置 lease_until 和 worker_id，过期任务可重领；以 attempts 限制重试，设计初值为 2 次领取。
-- Agent 每个分析任务最多 8 轮工具调用，单工具超时 30 秒，总时限 180 秒；这是初始配置，变更需记录实测依据。
+- 任务：queued → running → succeeded / failed；需要用户补充或确认时 running → waiting_for_input → queued → running。等待状态不是成功或失败。
+- 每次领取设置 worker_id、lease_until 和状态版本；设计初值最多 2 次技术重试。用户正常恢复不消耗技术重试次数。
+- Agent 每个任务累计最多 8 轮工具调用，单工具超时 30 秒，累计活跃执行时限 180 秒；用户等待时间不计入执行时限，恢复不会重置预算。实际参数由原型验证后调整。
 - 仅对超时、限流等可恢复错误重试；鉴权、无效输入及越权请求立即失败。
 - 保存工具名称、状态、耗时、引用 ID、提示词版本和用量摘要，不保存模型隐藏推理过程。
+- P0 先提供固定评测集和业务事件记录；Langfuse 是后续可选观测接入，默认关闭外部正文上传，先对合成资料验证再决定启用。
 
 ## 数据与权限
 
@@ -85,3 +136,12 @@ generate_plan(user_id, analysis_id, deadline, timezone, daily_minutes)
 ## 接口与变更
 
 公共 API：见 04。应用数据：见 03。部署：见 05。Schema、鉴权、工具或索引格式变更应写明兼容性，并由负责人审查；模型与嵌入版本改变需要检查旧索引兼容性。
+
+## 官方技术参考
+
+- [阿里云 ECS 安装 Docker 与使用 Compose](https://help.aliyun.com/zh/ecs/user-guide/install-and-use-docker)
+- [Docker Compose 单服务器部署](https://docs.docker.com/compose/how-tos/production/)
+- [Qdrant 混合检索与重排序](https://qdrant.tech/documentation/tutorials-basics/reranking-hybrid-search/)
+- [LangGraph 用户介入与恢复](https://docs.langchain.com/oss/python/langgraph/interrupts)
+- [MongoDB 与 LangGraph 集成](https://www.mongodb.com/docs/atlas/ai-integrations/langgraph/)
+- [Celery 使用 Redis](https://docs.celeryq.dev/en/stable/getting-started/backends-and-brokers/redis.html)

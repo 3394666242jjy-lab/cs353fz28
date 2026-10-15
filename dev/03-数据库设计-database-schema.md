@@ -1,10 +1,10 @@
 # CareerPilot 数据库设计
 
-状态：v0.1 设计草案。负责人维护逻辑设计，组员 B 实现应用集合与索引，C 实现片段及向量映射。当前未创建生产数据库。
+状态：v0.2 设计草案。负责人维护逻辑设计，组员 B 实现业务集合、队列分发与事件，C 实现片段及 Qdrant 映射，D 与 B 约定 LangGraph 状态持久化。当前未创建生产数据库。
 
 ## 通用约定
 
-- MongoDB 保存权威业务数据，向量存储保存可重建的检索索引。
+- 托管 MongoDB 保存权威业务数据与执行状态；Qdrant 保存可重建索引；OSS 保存原文件；Redis 作为 Celery Broker，不承担业务主库职责。
 - 对外 ID 使用不可预测的字符串；内部表示由实现统一，禁止前后端混用 ObjectId 和任意字符串。
 - 时间使用 UTC，API 为 ISO 8601；计划保留用户 timezone，默认 Asia/Shanghai。
 - 私有记录包含 user_id、created_at、updated_at；同一请求中的关联 ID 均验证属于当前用户。
@@ -30,17 +30,25 @@ erDiagram
 | --- | --- | --- |
 | users | id, email, password_hash, display_name, timezone | email 规范化后唯一；密码只存合适算法的哈希，不保存明文 |
 | documents | id, user_id, kind, filename, storage_key, media_type, size_bytes, current_version, status, deleted_at, purge_status | kind 为 resume/project；status 为 uploaded/processing/ready/failed/deleted；purge_status 跟踪物理清理 |
-| document_versions | id, user_id, document_id, version, extracted_text_key, content_hash, parser_version, embedding_model, status | 每次修改创建新版本；原文对象版本化；document_id + version 唯一 |
+| document_versions | id, user_id, document_id, version, extracted_text_key, content_hash, parser_version, chunking_config_version, embedding_model, embedding_dimension, index_version, status | 每次修改创建新版本；OSS 原文对象版本化；document_id + version 唯一 |
 | chunks | id, user_id, corpus, document_id, version, text, locator, vector_id, source_url, deleted_at | corpus 为 personal/public；个人片段必须有 user_id；公共片段必须标记来源 |
+| knowledge_sources | id, title, source_url, usage_note, version, content_hash, storage_key, status, deleted_at | 公共知识来源，离线受控导入；public 片段的 document_id 指向此处，不能用作个人经历证明 |
 | jobs | id, user_id, title, company, raw_jd, requirements, version | requirements 数组含稳定 id、text、category；category 为 required/preferred；文本原文保留 |
-| analyses | id, user_id, job_id, job_version, document_versions, matches, warnings, stale, trace_id, prompt_version | matches 含 requirement_id、status、evidence_refs、explanation、missing_information |
-| plans | id, user_id, analysis_id, deadline, timezone, daily_minutes, status, draft_tasks, confirmed_at | status 为 draft/confirmed；draft_tasks 不直接成为正式 plan_tasks |
+| analyses | id, user_id, job_id, job_version, document_versions, matches, warnings, stale, trace_id, prompt_version, retrieval_config_version, model_version | matches 含 requirement_id、status、evidence_refs、explanation、missing_information |
+| plans | id, user_id, analysis_id, execution_id, deadline, timezone, daily_minutes, status, draft_tasks, confirmed_at | status 为 draft/confirmed；draft_tasks 不直接成为正式 plan_tasks；execution_id 关联等待确认的图执行 |
 | plan_tasks | id, user_id, plan_id, title, requirement_ids, scheduled_date, estimated_minutes, status, source_refs | status 为 todo/in_progress/done；scheduled_date 按计划时区解释 |
 | interviews | id, user_id, analysis_id, status, turns, feedback, prompt_version | turns 含角色、文本、时间及问题编号；限制轮数和单轮长度 |
-| executions | id, user_id, type, resource_id, status, attempts, worker_id, lease_until, result_id, error, trace_id | type 为 index/analysis/plan；任务领取原子化；错误不得含密钥或简历全文 |
-| execution_events | id, user_id, execution_id, tool_name, status, duration_ms, evidence_ids, usage_summary | 仅业务可观测事件；不存隐藏推理过程或敏感输入全文 |
+| executions | id, user_id, type, resource_id, status, state_version, technical_retries, worker_id, lease_until, last_dispatch_id, result_type, result_id, pending_input, active_seconds, tool_calls_used, error, trace_id | type 为 index/analysis/plan；status 含 waiting_for_input；使用状态版本和租约避免并发执行；预算跨恢复累计 |
+| dispatch_events | id, user_id, execution_id, command, expected_state_version, input_ref, status, published_at, publish_attempts | command 为 start/resume；status 为 pending/published；业务变更与待投递指令同事务写入；至少一次发布 |
+| execution_inputs | id, user_id, execution_id, interrupt_id, checkpoint_id, kind, answer, document_versions, content_hash | 保存资料补充或确认输入；execution_id + interrupt_id 唯一；同一交互不得用不同回答覆盖 |
+| execution_events | id, user_id, execution_id, sequence, event_type, status, stage, duration_ms, evidence_ids, usage_summary, created_at | 持久化 SSE 业务事件，按 execution 内 sequence 排序；不存隐藏推理过程或敏感输入全文 |
+| agent_threads | id, user_id, execution_id, thread_id, checkpoint_id, graph_version | 服务端生成线程标识；用户只能通过已鉴权 execution 访问，不能提交任意 thread_id |
 
 上述集合均适用通用 ID 与时间字段。document_versions 中的 extracted_text_key 指向私有对象；不把大型文件正文塞入 users 等主业务集合。
+
+MongoDBSaver 使用独立逻辑库和适配器管理的 Checkpoint/写入集合，实际 Schema 随锁定的适配器版本确认，不手写一套同名替代。agent_threads 只保存权限映射与版本；Checkpoint 可能含用户输入，采用与个人资料相同的访问、删除和备份策略。适配器与选定 MongoDB 实例的兼容性必须通过原型验证。
+
+pending_input 对外只公开已允许的交互字段：kind（clarification/plan_confirmation）、interrupt_id、checkpoint_id、question 或 plan_id。用户回答保存在受控 execution_inputs，连同恢复指令同事务写入；确认计划也生成内部确认输入。dispatch_events.input_ref 只引用该输入，不把全文放进队列消息。Checkpoint 中的执行副本遵循相同权限和清理规则。
 
 ## 关键结构
 
@@ -72,19 +80,31 @@ locator 示例：`{"kind":"pdf","page":2}` 或 `{"kind":"text","line_start":10,"
 | analyses | user_id, job_id, created_at | 分析历史 |
 | plan_tasks | plan_id, id 唯一 | 确认计划时使用稳定任务 ID 幂等写入 |
 | interviews | user_id, created_at | 面试历史 |
-| executions | status, lease_until, created_at | Worker 领取及恢复任务 |
-| execution_events | execution_id, created_at | 执行事件查询 |
+| executions | status, lease_until, created_at | 故障恢复扫描，实际任务由 Celery 分发 |
+| dispatch_events | status, created_at；id 唯一 | 待分发指令与消息去重标识 |
+| execution_inputs | execution_id, interrupt_id 唯一 | 重复恢复请求去重，比较 content_hash 识别不同输入 |
+| execution_events | execution_id, sequence 唯一 | SSE 有序回放及重复事件识别 |
+| agent_threads | execution_id 唯一；thread_id 唯一 | 图执行的服务端归属与定位 |
 
-向量索引 payload 至少包含 corpus、user_id、document_id、version、chunk_id、deleted 标志。检索前验证文档仍可访问；向量过滤与 MongoDB 校验共同生效。
+Qdrant payload 至少包含 corpus、user_id、document_id、version、chunk_id、index_version、deleted 标志；个人 user_id 与文档版本等过滤字段建立适用索引。稠密向量和关键词稀疏表示使用不同命名字段；启用混合检索时记录所用稀疏模型/分词器版本。重排模型位于服务适配器，可在召回后对原文候选执行，不要求额外存入第三种向量。
+
+检索前验证文档仍可访问，返回结果再核对权威状态；Qdrant 过滤与 MongoDB 校验共同生效。source_url、相似度和排序分数不得当成“求职成功概率”。
 
 ## 生命周期与一致性
 
 1. 新版本只有全部入库成功后才切换 current_version；旧版不参与默认检索。
 2. 资料更新或 JD 修改后，将相关分析标记 stale；用户可查看旧版说明并重新分析。
 3. 删除先写 deleted_at 并阻断资料与引用访问，再异步删除对象、片段及向量；purge_status 可观察，失败可重试。
-4. 计划确认使用 MongoDB 事务，在同一事务中创建稳定 ID 的 plan_tasks 并标记 confirmed；托管实例需支持事务。重复请求返回同一计划及任务，不重复创建。
-5. 跨 MongoDB、文件和向量存储的操作使用可重试的持久化任务，不假设跨系统事务。
+4. 计划确认重新验证资料/分析版本与时间约束，在同一 MongoDB 事务中创建稳定 ID 的 plan_tasks、标记 confirmed，并创建 LangGraph 恢复的 dispatch_events。重复请求返回同一计划及任务；图尚未恢复时仍能查询正式计划，恢复指令可重投。
+5. 跨 MongoDB、OSS、Redis 和 Qdrant 的操作不假设跨系统事务。创建 execution 与 Outbox 同事务；发布后再标记 published，因此可能重复投递。Worker 根据 dispatch_id、state_version 和 lease_until 认领，资源写入幂等；恢复器检查未发布和失效在途任务。Checkpoint 与业务写入非同一原子步骤，恢复节点不得重复产生副作用。
 6. 备份、保留时长和用户注销清理策略由负责人在上线前确认并写入部署配置。
+7. 删除资料或注销用户时，同时处理涉及的图线程和 Checkpoint 中的个人内容；恢复执行前重新校验资料归属、删除状态及版本，不能通过旧 Checkpoint 重新使用已删除资料。
+
+## 执行状态与事件
+
+执行状态统一为 queued/running/waiting_for_input/succeeded/failed。waiting_for_input 保留稳定 interrupt/checkpoint 标识，不占用 Worker；恢复必须匹配当前状态版本。正常用户恢复不计为技术重试，tool_calls_used 和 active_seconds 不能清零。
+
+P0 事件类型为 stage、waiting_for_input、completed、failed。event_type 对应 SSE 名称，sequence 在同一 execution 内递增；心跳仅保持连接，不作为业务事件落库。Redis Pub/Sub 可用于唤醒，但 MongoDB 事件及任务快照负责断线恢复。事件保留期在上线前确认，历史已清理时 API 提示改用任务快照。
 
 ## 设计变更
 
