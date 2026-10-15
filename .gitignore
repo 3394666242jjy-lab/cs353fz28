@@ -1,0 +1,43 @@
+# Local extraction and temporary work
+/tmp/
+/output/
+/outputs/
+
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private inputs, generated indexes and database dumps
+/data/private/
+/uploads/
+/storage/
+/backups/
+/vector_storage/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript and build outputs
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Logs and local editor files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
