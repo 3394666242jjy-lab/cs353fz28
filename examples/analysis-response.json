@@ -1,0 +1,54 @@
+{
+  "data": {
+    "id": "analysis_demo_001",
+    "job_id": "job_demo_backend",
+    "job_version": 1,
+    "document_versions": [
+      {"document_id": "doc_demo_resume", "version": 1},
+      {"document_id": "doc_demo_project", "version": 1}
+    ],
+    "stale": false,
+    "matches": [
+      {
+        "requirement_id": "req_db",
+        "requirement": "具备数据库设计经验，能够说明字段、关联关系与查询索引的设计。",
+        "category": "required",
+        "status": "supported",
+        "evidence_refs": [
+          {"chunk_id": "chunk_demo_db", "document_id": "doc_demo_project", "version": 1}
+        ],
+        "explanation": "项目说明明确记录了数据模型、字段、关联关系和查询索引设计，能够支持这项经历要求。",
+        "missing_information": []
+      },
+      {
+        "requirement_id": "req_perf",
+        "requirement": "具备后端性能优化经验，能够提供测量方法与优化前后的对比数据。",
+        "category": "required",
+        "status": "partial",
+        "evidence_refs": [
+          {"chunk_id": "chunk_demo_cache", "document_id": "doc_demo_project", "version": 1}
+        ],
+        "explanation": "资料记录了 Redis 缓存的使用，但未提供测量方法和优化前后对比，不能据此确认完整的性能优化实践。",
+        "missing_information": [
+          "使用了什么测量方法与测试场景？",
+          "是否有优化前后的延迟、吞吐量或缓存命中率记录？"
+        ]
+      },
+      {
+        "requirement_id": "req_docker",
+        "requirement": "具备使用 Docker 制作应用镜像并完成部署的经验。",
+        "category": "required",
+        "status": "not_evidenced",
+        "evidence_refs": [],
+        "explanation": "现有简历与项目说明未体现 Docker 镜像制作及部署经历；这不代表用户不具备该能力。",
+        "missing_information": ["是否有可以补充的 Dockerfile、部署说明或相关项目记录？"]
+      }
+    ],
+    "warnings": ["此响应为人工组织的合成契约样例，不是模型实测结果。"],
+    "trace_id": "trace_fixture_001",
+    "prompt_version": "analysis-contract-v1",
+    "retrieval_config_version": "dense-demo-v1",
+    "model_version": "fixture-only"
+  },
+  "request_id": "request_fixture_analysis_001"
+}

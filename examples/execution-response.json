@@ -1,0 +1,14 @@
+{
+  "data": {
+    "id": "exec_demo_analysis_001",
+    "type": "analysis",
+    "status": "succeeded",
+    "state_version": 3,
+    "result_type": "analysis",
+    "result_id": "analysis_demo_001",
+    "pending_input": null,
+    "error": null,
+    "latest_event_id": "evt_demo_analysis_4"
+  },
+  "request_id": "request_fixture_execution_001"
+}

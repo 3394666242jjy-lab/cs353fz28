@@ -1,6 +1,18 @@
 # CareerPilot 数据库设计
 
-状态：v0.2 设计草案。负责人维护逻辑设计，组员 B 实现业务集合、队列分发与事件，C 实现片段及 Qdrant 映射，D 与 B 约定 LangGraph 状态持久化。当前未创建生产数据库。
+状态：v0.3 设计草案与 M1 契约候选版。负责人维护逻辑设计，B 实现业务集合，C 实现片段及 Qdrant 映射，D 与 B 约定分析结构。当前未创建生产数据库。
+
+## M1 数据范围
+
+首轮只需要 users、documents、document_versions、chunks、jobs、analyses 和 executions。users 由本地种子脚本初始化，所有私有集合验证 user_id。文件 storage_key/extracted_text_key 先指向本地私有适配器，不改变未来迁移 OSS 的逻辑字段。
+
+- 固定版本 1：保留 version/current_version、来源位置及 content_hash，M1 不实现资料编辑和完整删除界面。
+- jobs 保存原始 JD；D 的拆解要求存为 analyses.requirement_snapshot，不覆盖用户输入或自动改动 job_version。
+- executions 只进入 queued/running/succeeded/failed；缺失信息写入分析结果，pending_input=null。M1 没有 SSE 时 latest_event_id 可为 null。
+- technical_retries、worker_id、lease_until 等完整恢复字段可按需预留；不得把尚未实现的 Outbox 或恢复逻辑当成 M1 已完成。
+- 计划、面试、公共知识、dispatch_events、execution_inputs、execution_events、agent_threads 和 Checkpoint 集合按后续阶段引入，首轮不要求全部建好。
+
+下面的关系、字段和生命周期包含完整目标；首轮范围以本节和 [M1 开工计划](08-M1开工计划-kickoff-plan.md) 为准。
 
 ## 通用约定
 
@@ -34,7 +46,7 @@ erDiagram
 | chunks | id, user_id, corpus, document_id, version, text, locator, vector_id, source_url, deleted_at | corpus 为 personal/public；个人片段必须有 user_id；公共片段必须标记来源 |
 | knowledge_sources | id, title, source_url, usage_note, version, content_hash, storage_key, status, deleted_at | 公共知识来源，离线受控导入；public 片段的 document_id 指向此处，不能用作个人经历证明 |
 | jobs | id, user_id, title, company, raw_jd, requirements, version | requirements 数组含稳定 id、text、category；category 为 required/preferred；文本原文保留 |
-| analyses | id, user_id, job_id, job_version, document_versions, matches, warnings, stale, trace_id, prompt_version, retrieval_config_version, model_version | matches 含 requirement_id、status、evidence_refs、explanation、missing_information |
+| analyses | id, user_id, job_id, job_version, document_versions, requirement_snapshot, matches, warnings, stale, trace_id, prompt_version, retrieval_config_version, model_version | requirement_snapshot 含 id/text/category；matches 含 requirement_id、status、evidence_refs、explanation、missing_information |
 | plans | id, user_id, analysis_id, execution_id, deadline, timezone, daily_minutes, status, draft_tasks, confirmed_at | status 为 draft/confirmed；draft_tasks 不直接成为正式 plan_tasks；execution_id 关联等待确认的图执行 |
 | plan_tasks | id, user_id, plan_id, title, requirement_ids, scheduled_date, estimated_minutes, status, source_refs | status 为 todo/in_progress/done；scheduled_date 按计划时区解释 |
 | interviews | id, user_id, analysis_id, status, turns, feedback, prompt_version | turns 含角色、文本、时间及问题编号；限制轮数和单轮长度 |
@@ -66,6 +78,8 @@ pending_input 对外只公开已允许的交互字段：kind（clarification/pla
 
 匹配状态为 supported/partial/not_evidenced。not_evidenced 表示资料未体现，不等于用户不具备能力。
 
+公开 API 依据 requirement_snapshot 将 requirement 文本和 category 附加到每条 match。M1 的具体响应、证据原文和三类结果见 [合成开发样例](../examples/README.md)，不要把示例 ID 或预期结论硬编码到真实执行路径。
+
 locator 示例：`{"kind":"pdf","page":2}` 或 `{"kind":"text","line_start":10,"line_end":18}`。只有实际解析获得的位置才能写入。
 
 ## 索引初稿
@@ -85,6 +99,8 @@ locator 示例：`{"kind":"pdf","page":2}` 或 `{"kind":"text","line_start":10,"
 | execution_inputs | execution_id, interrupt_id 唯一 | 重复恢复请求去重，比较 content_hash 识别不同输入 |
 | execution_events | execution_id, sequence 唯一 | SSE 有序回放及重复事件识别 |
 | agent_threads | execution_id 唯一；thread_id 唯一 | 图执行的服务端归属与定位 |
+
+M1 先实现 users、documents、document_versions、chunks、jobs、analyses 和 executions 对应索引；Qdrant 的 personal 用户/文档/版本过滤始终生效。后续集合按阶段引入，不能为了首轮简单而移除基本权限隔离。
 
 Qdrant payload 至少包含 corpus、user_id、document_id、version、chunk_id、index_version、deleted 标志；个人 user_id 与文档版本等过滤字段建立适用索引。稠密向量和关键词稀疏表示使用不同命名字段；启用混合检索时记录所用稀疏模型/分词器版本。重排模型位于服务适配器，可在召回后对原文候选执行，不要求额外存入第三种向量。
 

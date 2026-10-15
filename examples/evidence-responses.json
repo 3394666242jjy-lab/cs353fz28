@@ -1,0 +1,28 @@
+{
+  "responses": {
+    "/api/v1/evidence/chunk_demo_db?version=1": {
+      "data": {
+        "chunk_id": "chunk_demo_db",
+        "document_id": "doc_demo_project",
+        "version": 1,
+        "filename": "project-demo.md",
+        "source_type": "personal",
+        "locator": {"kind": "text", "line_start": 11, "line_end": 11},
+        "quote": "负责设计设备、借用申请和归还记录的数据模型，定义字段、关联关系及查询索引，并绘制数据库关系图。"
+      },
+      "request_id": "request_fixture_evidence_db"
+    },
+    "/api/v1/evidence/chunk_demo_cache?version=1": {
+      "data": {
+        "chunk_id": "chunk_demo_cache",
+        "document_id": "doc_demo_project",
+        "version": 1,
+        "filename": "project-demo.md",
+        "source_type": "personal",
+        "locator": {"kind": "text", "line_start": 15, "line_end": 16},
+        "quote": "在热门设备列表查询中使用 Redis 缓存查询结果，减少重复访问 MongoDB。\n本资料未提供延迟、吞吐量或缓存命中率的测量记录。"
+      },
+      "request_id": "request_fixture_evidence_cache"
+    }
+  }
+}

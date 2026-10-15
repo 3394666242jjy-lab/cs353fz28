@@ -1,6 +1,27 @@
 # CareerPilot API 接口文档
 
-状态：v0.2 契约草案，接口尚未实现。B 维护业务 API 和 SSE；A 使用样例开发；C/D 维护检索、图状态与恢复的内部契约。
+状态：v0.3 契约候选版，接口尚未实现。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
+
+## M1 必要接口与响应字段
+
+完整产品接口保留在下文；M1 仅实现以下子集。文件仅支持 UTF-8 Markdown/TXT，PDF 在 M2；身份使用本地种子账号，不要求首轮开放注册。认证、用户隔离和标准错误格式仍生效。
+
+| 方法与路径 | 本轮请求 | 本轮响应约定（均使用统一 envelope） |
+| --- | --- | --- |
+| POST /auth/login、GET /me | 登录信息或有效令牌 | 返回令牌或本人资料，不返回密码哈希 |
+| POST /documents | multipart file、kind=resume/project | 202：document_id、execution_id、status=processing |
+| GET /documents、GET /documents/{id} | 列表分页或文档 ID | 列表用 items/next_cursor；单资源含 id、kind、filename、current_version、status、error（可空） |
+| POST /jobs、GET /jobs/{id} | title、raw_jd、company（可选） | 创建返回 201：job_id、version；查询返回 id、title、raw_jd、version |
+| POST /analyses | job_id、document_ids | 202：execution_id；资料未就绪返回 409 |
+| GET /executions/{id} | 执行 ID | id、type、status、state_version、result_type、result_id、error；pending_input 和 latest_event_id 本轮可为 null |
+| GET /analyses/{id} | 分析 ID | id、job_id、job_version、document_versions、stale、matches、warnings；版本及 trace 元数据按实际能力返回 |
+| GET /evidence/{chunk_id} | version | chunk_id、document_id、version、filename、source_type、locator、quote |
+
+`GET /analyses/{id}` 的每条 match 必须有 requirement_id、requirement、category、status、evidence_refs、explanation 和 missing_information。category 为 required/preferred；status 为 supported/partial/not_evidenced。前两类必须有原文引用，not_evidenced 的 evidence_refs 为空。每条引用包含 chunk_id、document_id、version。
+
+M1 用轮询查询 executions，终态停止；缺少证据时直接返回分析中的 missing_information，不进入 waiting_for_input。D 拆解的要求保存在分析快照，B 组装公开响应，不覆盖原始 JD。fixture 里的 ID 和版本标签仅为渲染样例，真实路径使用服务端生成 ID 和实际运行元数据。
+
+以下统一响应包裹保持不变：成功为 data/request_id，失败为 error/request_id。完整样例见 [请求描述](../examples/requests.json)、[分析响应](../examples/analysis-response.json)、[证据响应映射](../examples/evidence-responses.json) 和 [执行快照](../examples/execution-response.json)。evidence-responses.json 是多请求 fixture 映射，每个 API 只返回其中对应的单资源 envelope。
 
 ## 通用约定
 
@@ -10,7 +31,7 @@
 - 成功响应使用 `{"data": ..., "request_id": "..."}`；错误使用 `{"error":{"code":"...","message":"..."},"request_id":"..."}`。
 - 列表采用 cursor、limit，默认 limit=20，最大 100；返回 items 和 next_cursor。
 - 资源不存在、已删除或不属于用户时返回 404；过期分析不能直接生成新计划，返回 409 ANALYSIS_STALE。
-- 异步创建返回 202 和 execution_id；前端通过 SSE 订阅业务事件，轮询作为恢复后备，不以 202 或 Celery 消息状态表示业务完成。
+- 异步创建返回 202 和 execution_id，不以 202 或 Celery 消息状态表示业务完成；M1 使用轮询，M2 接入 SSE 后保留查询作为恢复后备。
 
 ## 认证
 
@@ -50,9 +71,9 @@
 | POST /executions/{id}/resume | interrupt_id, checkpoint_id, answer | 202：execution_id；只恢复资料追问，计划确认走独立接口 |
 | GET /evidence/{chunk_id} | version | 200：原文片段、位置和来源；越权或已删除 404 |
 
-POST /analyses 在服务端固定实际使用的文档版本。D 完成 JD 要求拆解后写入分析快照，更新岗位 requirements 时使用版本校验，不覆盖用户并发编辑。
+POST /analyses 在服务端固定实际使用的文档版本。D 完成 JD 要求拆解后写入分析快照；M1 不自动更新岗位要求。后续如需写回岗位 requirements，使用版本校验，不覆盖用户并发编辑。
 
-## 执行事件与补充信息
+## 执行事件与补充信息（M2）
 
 `GET /executions/{id}/events` 使用 Authorization 请求头，响应 Content-Type 为 text/event-stream，禁止响应缓存。前端使用 fetch 读取流，不将令牌放 URL。after_event_id 或 Last-Event-ID 指定最后成功应用的事件；两者同时传入且不一致返回 400。事件游标须属于当前任务，重复事件按 id 去重。
 
@@ -77,29 +98,9 @@ resume 仅接受本用户 execution 当前 pending_input.kind=clarification。an
 
 服务端匹配 interrupt_id、checkpoint_id 和 state_version，验证来源仍可使用，将恢复输入及 dispatch_events 持久化，再返回 202。前端不能传任意 thread_id 或任意图节点命令。同一恢复请求重复提交返回同一接受结果；同一 interrupt 使用不同回答重放时返回 409 INPUT_CONFLICT；旧 Checkpoint 返回 409 STALE_CHECKPOINT。
 
-分析结果样例（仅说明结构，不代表实际运行结果）：
+完整分析结果统一维护在 [analysis-response.json](../examples/analysis-response.json)，覆盖三种匹配状态和实际原文定位，避免文档内另存一份字段不同的样例。SSE 协议场景见 [execution-events.txt](../examples/execution-events.txt)，只供 M2 提前对齐，不代表接口已经实现。
 
-```json
-{
-  "data": {
-    "id": "analysis_demo",
-    "job_id": "job_demo",
-    "stale": false,
-    "matches": [{
-      "requirement_id": "req_01",
-      "requirement": "具备数据库设计经验",
-      "status": "supported",
-      "evidence_refs": [{"chunk_id": "chunk_demo", "document_id": "doc_demo", "version": 1}],
-      "explanation": "项目资料记录了数据库模型设计工作。",
-      "missing_information": []
-    }],
-    "warnings": []
-  },
-  "request_id": "request_demo"
-}
-```
-
-## 准备计划
+## 准备计划（M2）
 
 | 方法与路径 | 请求 | 响应 |
 | --- | --- | --- |
@@ -112,7 +113,7 @@ deadline 使用 YYYY-MM-DD，timezone 为 IANA 时区标识，daily_minutes 为�
 
 计划草稿生成后，execution 为 waiting_for_input，pending_input.kind=plan_confirmation，result_type=plan，result_id 指向 draft 计划。用户确认前不创建正式任务。confirm 重新检查权限、来源版本及安排，在同一业务事务中保存任务和恢复指令；200 表示正式计划已保存，图恢复完成可稍后通过 execution 查询。重复请求不重复创建任务或恢复指令。模型在确认后的恢复节点不再次生成或改写已确认计划。
 
-## 文本面试（P1）
+## 文本面试（P1 / M3）
 
 | 方法与路径 | 请求 | 响应 |
 | --- | --- | --- |

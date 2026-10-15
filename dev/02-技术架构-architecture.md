@@ -1,6 +1,12 @@
 # CareerPilot 技术架构
 
-状态：v0.2 技术与部署设计基线，尚未实现或完成云端验证。负责人拥有架构决策权；各成员记录变更理由、影响和迁移方式。
+状态：v0.3 技术设计与 M1 契约候选版，尚未实现或完成云端验证。负责人拥有架构决策权；各成员记录变更理由、影响和迁移方式。
+
+## M1 必要子集
+
+本篇表格和系统图描述总体目标。首轮只连接 React/TS、FastAPI/Pydantic、MongoDB、最小 Celery/Redis、LangGraph 基本流程、Embedding 与 Qdrant 向量检索。文件使用本地私有目录，前端通过任务查询轮询；只处理 Markdown/TXT 和个人经历证据，缺失信息写入结果，不触发 interrupt。
+
+OSS、PDF、混合检索、Rerank、SSE、持久化用户恢复与完整 Outbox 补偿在 M2，计划和面试按 PRD 阶段推进。M1 的 Celery 发布失败必须转为可查询错误，但不宣称已具备完整的跨进程可靠性。完整规范属于后续交付目标，不能要求 A–D 在首轮同时完成所有组件。样例与任务见 [examples](../examples/README.md) 和 [M1 开工计划](08-M1开工计划-kickoff-plan.md)。
 
 ## 建议技术方案
 
@@ -19,6 +25,8 @@
 | 评测与观察 | 固定验收集、结构化运行事件；Langfuse 为可选接入 | 跟踪证据、工具调用、耗时和用量；对外追踪默认不发送个人简历或回答正文 |
 
 使用一个 Python 代码库划分业务、Agent、RAG、Worker 和任务分发模块，不按模块建立微服务。先完成核心流程，再补齐队列恢复、混合检索、SSE 与发布能力；部署和组件引入顺序见 05。版本与资源规格须通过原型验证后锁定，当前不承诺费用和性能数字。
+
+M1 真实数据流：A 上传/导入 → B 保存元数据并创建任务 → C 入库/检索或 D 执行分析 → B 校验并保存结果 → A 查询与展示。C 的入库工具不依赖前端；D 不直接写 API 资源；B 不自行重新实现检索和 Agent 判定。
 
 ## 系统边界
 
@@ -117,6 +125,8 @@ generate_plan(user_id, analysis_id, deadline, timezone, daily_minutes)
 - locator 为结构化位置：PDF 页码或文本行号范围；解析阶段无法定位时，必须明确标记，不能捏造页码。
 - retrieval_score 仅用于检索排序，不作为“求职成功概率”或能力分数展示。
 - evidence_ids 只能引用本次实际检索返回的条目，保存前再次验证所有权、版本和未删除状态。
+
+M1 中 retrieve_evidence 的 corpus 固定 personal，默认只用向量检索；公开 JSON fixture 和答案不参与索引。D 返回内部 requirements/evidence_ids 后，B 保存 requirement_snapshot，按本次工具返回的元数据转换为公开 API 的 matches/evidence_refs，并补齐 requirement 文本和 category。supported/partial 必须有真实证据，not_evidenced 的引用为空；UI 不从不稳定的解释文字中推断状态。
 
 ## 执行状态与预算
 

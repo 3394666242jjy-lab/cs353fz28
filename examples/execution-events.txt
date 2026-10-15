@@ -1,0 +1,26 @@
+: 合成协议样例，不是实际运行日志。真实 SSE 属于 M2，M1 使用任务快照轮询。
+: 场景 A：一次分析的阶段与成功事件，按顺序回放。
+
+id: evt_demo_analysis_1
+event: stage
+data: {"execution_id":"exec_demo_analysis_001","status":"queued","stage":"queued"}
+
+id: evt_demo_analysis_2
+event: stage
+data: {"execution_id":"exec_demo_analysis_001","status":"running","stage":"retrieving_evidence"}
+
+id: evt_demo_analysis_3
+event: stage
+data: {"execution_id":"exec_demo_analysis_001","status":"running","stage":"generating_analysis"}
+
+id: evt_demo_analysis_4
+event: completed
+data: {"execution_id":"exec_demo_analysis_001","status":"succeeded","result_type":"analysis","result_id":"analysis_demo_001"}
+
+: 场景 B：独立执行的失败事件，不接在场景 A 的同一任务后面。
+
+id: evt_demo_failed_1
+event: failed
+data: {"execution_id":"exec_demo_failed_001","status":"failed","error":{"code":"MODEL_UNAVAILABLE","message":"模型服务暂不可用，请稍后重试。"}}
+
+: 样例结束。
