@@ -1,6 +1,6 @@
 # CareerPilot API 接口文档
 
-状态：v0.3 契约候选版，接口尚未实现。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
+状态：v0.3 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；有效业务请求统一返回 501 NOT_IMPLEMENTED，业务实现待完成。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
 
 ## M1 必要接口与响应字段
 

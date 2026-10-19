@@ -1,0 +1,1 @@
+"""CareerPilot application package."""

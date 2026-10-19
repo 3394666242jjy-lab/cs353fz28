@@ -8,9 +8,9 @@
 - 公共样例在 examples/ 统一维护。JSON/事件文件是契约 fixture，明确标记样例模式；只索引原始简历和项目文件，不能把预期答案混进 RAG 索引或宣称为真实结果。
 - PRD 定义功能和验收，API 文档定义前后端契约，数据库文档定义集合与生命周期。
 - 先约定输入输出与样例，再并行实现。接口不确定时在 Issue 中讨论，不靠猜测改对方代码。
-- 前端使用 React/TypeScript，服务端使用 Python/FastAPI/Pydantic；Agent 使用 LangGraph，队列使用 Celery/Redis；具体运行时及依赖版本在脚手架中锁定并提交锁文件。
-- 统一 UTF-8、LF 和文件末尾换行。格式化器与 lint 配置在脚手架中确定；不提交未确认版本的工具配置。
-- 代码目录在搭建时确认，建议 frontend、backend、backend/rag、backend/agent、backend/contracts；目录是实现规划，当前尚未创建。
+- 前端使用 React/TypeScript，服务端使用 Python/FastAPI/Pydantic；Agent 目标使用 LangGraph，队列使用 Celery/Redis。运行时要求见 09 文档；提交 `package-lock.json` 与 `uv.lock`，新依赖由实现者加入并更新锁文件。
+- 统一 UTF-8、LF 和文件末尾换行。前端使用 Prettier 与 TypeScript，后端使用 Ruff；提交前执行 09 文档中的检查命令。
+- 已建立 `frontend/src`、`backend/app/api`、`backend/app/schemas`、`backend/app/rag` 和 `backend/app/agent`。公共 Pydantic 模型是类型源，通过 `scripts/export_openapi.py` 和 `npm run api:types` 同步前端类型。
 
 ## 接口与类型
 
@@ -58,7 +58,7 @@ Langfuse 为可选观测接入，默认不向外部平台上传个人原文或�
 
 各成员提供自己模块的运行、依赖、健康检查及配置需求。负责人统一整合 Compose、Nginx、GitHub Actions 和阿里云发布，四位开发成员不另设部署岗位。前端静态文件、API/Worker、Redis 和 Qdrant 使用对应容器；MongoDB 使用托管实例，文件使用私有 OSS。
 
-PR 检查不接触生产凭据；main 构建精确 SHA 的镜像，正式 ECS 更新由负责人手动触发。当前仓库只有文档，不提交假定可运行的 Compose 或空转 CI 来冒充完成；脚手架就绪后补齐真实配置与验证。
+PR 检查不接触生产凭据，现有流程执行后端校验、真实本地依赖连接、契约同步及前端构建。当前 Compose 仅是本地开发配置。main 镜像构建和负责人手动 ECS 发布仍是后续目标，不能把 CI 检查成功当作已部署。
 
 ## 模块交付
 
