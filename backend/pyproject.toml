@@ -1,0 +1,35 @@
+[project]
+name = "careerpilot-backend"
+version = "0.1.0"
+description = "CareerPilot shared development scaffold"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "celery>=5.4,<6",
+    "fastapi>=0.115,<1",
+    "httpx>=0.28,<1",
+    "pydantic-settings>=2.7,<3",
+    "pymongo>=4.11,<5",
+    "python-multipart>=0.0.20,<1",
+    "redis>=5.2,<8",
+    "uvicorn>=0.34,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pyyaml>=6,<7", "ruff>=0.11,<1"]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]

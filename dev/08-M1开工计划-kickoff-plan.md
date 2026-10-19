@@ -36,8 +36,8 @@ M1 只承诺这条链路。准备计划、任务看板、文本面试、PDF/OCR�
 | 角色 | 本轮任务 | 交付物 | 可并行与依赖 |
 | --- | --- | --- | --- |
 | 负责人 | [#5 确认契约并组织联调验收](https://github.com/3394666242jjy-lab/cs353fz28/issues/5) | 契约确认、身份认领、真实验收记录 | 先确认公共约定，模块接通后验收；最终测试和部署仍由本人负责 |
-| A 前端 | [#6 上传、JD 与带证据分析页面](https://github.com/3394666242jjy-lab/cs353fz28/issues/6) | React/TS 脚手架、资料/JD 输入、轮询状态、结果与引用页面 | 先用 JSON fixture 开发；接 B API 后切换真实服务模式 |
-| B 后端 | [#7 API、MongoDB 与最小任务链路](https://github.com/3394666242jjy-lab/cs353fz28/issues/7) | FastAPI/Pydantic 脚手架、种子账号、上传/JD/任务/分析/证据接口、最小 Celery Worker | 先实现存储与契约，联调时接 C 的入库和 D 的分析 |
+| A 前端 | [#6 上传、JD 与带证据分析页面](https://github.com/3394666242jjy-lab/cs353fz28/issues/6) | 在 React/TS 骨架上实现真实资料/JD 输入、轮询状态、结果与引用页面 | 已有显式样例交互；接 B API 后切换真实服务模式 |
+| B 后端 | [#7 API、MongoDB 与最小任务链路](https://github.com/3394666242jjy-lab/cs353fz28/issues/7) | 在 FastAPI/Pydantic 骨架上实现种子账号、上传/JD/任务/分析/证据接口、最小 Celery 业务任务 | 已有路由与模型；先实现存储和鉴权，联调时接 C 的入库和 D 的分析 |
 | C RAG | [#8 文本入库、Qdrant 与原文定位](https://github.com/3394666242jjy-lab/cs353fz28/issues/8) | 文本解析、切分、Embedding、向量入库、过滤检索、来源定位 | 与 B 约定元数据和存储接口；检索模块可先独立运行 |
 | D Agent | [#9 JD 拆解、证据核对与结构化分析](https://github.com/3394666242jjy-lab/cs353fz28/issues/9) | LangGraph 基本流程、检索工具接入、结构化输出及超时控制 | 先用检索替身开发契约，再接 C 的真实检索；B 负责最终保存 |
 

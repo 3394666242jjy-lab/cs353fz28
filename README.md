@@ -2,13 +2,13 @@
 
 CS353FZ 五人团队项目。面向大学生实习求职，结合个人经历、目标岗位和检索到的知识资料，提供有依据的岗位分析、准备计划和模拟面试。
 
-当前阶段：需求与设计初稿。仓库暂未包含可运行的应用；本文中的功能和技术方案是开发基线，不能视为已实现。
+当前阶段：可启动的开发骨架。已有 React/TypeScript 页面、FastAPI 路由与类型契约、本地依赖 Compose 和 PR 检查；真实鉴权、存储、RAG 与 Agent 业务仍由各成员实现。页面样例不代表真实分析结果。
 
 ## 从这里开始
 
-1. 先阅读 [M1 开工计划](dev/08-M1开工计划-kickoff-plan.md)，由负责人确认范围与契约。
-2. 使用 [examples/ 合成样例](examples/README.md) 对齐输入、分析响应及引用；只索引原始简历和项目说明。
-3. 认领下方首轮任务，各模块先按公共契约并行开发，再接真实 API 与检索完成联调。
+1. 按 [本地启动指南](dev/09-本地开发启动-local-setup.md) 安装锁定依赖，启动前后端；前端默认地址为 `http://127.0.0.1:5173`，API 文档为 `http://127.0.0.1:8000/docs`。
+2. 阅读 [M1 开工计划](dev/08-M1开工计划-kickoff-plan.md)，使用 [合成样例](examples/README.md) 对齐契约；只索引原始简历和项目说明。
+3. 认领下方任务，在已有模块上开发。业务接口当前明确返回 `501 NOT_IMPLEMENTED`，完成模块后再接真实服务联调。
 
 **M1 只做：文本资料上传 → JD 导入 → 向量检索 → 逐项分析 → 原文引用展示。** 准备计划、模拟面试和云端部署不作为本轮开发前置条件。
 
@@ -24,7 +24,7 @@ CS353FZ 五人团队项目。面向大学生实习求职，结合个人经历、
 | 后台任务 | Celery + Redis | 分发解析、索引与 Agent 执行任务，业务状态保存在 MongoDB |
 | 原始文件 | 阿里云 OSS 私有存储 | 简历、项目说明和版本化解析文本 |
 | 云端运行 | 阿里云 ECS + Docker Compose + Nginx/HTTPS | 在云服务器运行前端、API、Worker、Redis 和 Qdrant |
-| 工程交付 | GitHub Actions 检查/构建，负责人确认后发布 | 本地开发与云端部署使用对应环境配置；当前尚未实现 CI/CD |
+| 工程交付 | GitHub Actions 检查/构建，负责人确认后发布 | 已添加 PR 检查与本地依赖连接验证；云端镜像发布和部署尚未实现 |
 
 本地开发联调完成后，应用最终部署到云服务器。Docker Compose 在本地和 ECS 上管理容器；GitHub Actions 负责检查与构建，正式发布由负责人手动触发。模型、Embedding 和 Rerank 初期通过 API 调用，ECS 主要运行应用和检索服务。
 
@@ -48,6 +48,17 @@ P0/P1 表示最终交付优先级；实现顺序另按里程碑划分：
 | M3 P1 扩展 | 任务进度看板、文本模拟面试与反馈 | 按团队进度扩展，不阻塞 M1 |
 
 本页技术栈描述总体目标，M1 的必要组件、接口和数据集合以 [开工计划](dev/08-M1开工计划-kickoff-plan.md) 为准。
+
+## 代码入口
+
+| 负责人 | 起点 | 下一步 |
+| --- | --- | --- |
+| A 前端 | [frontend/src](frontend/src) | 用真实上传、JD、轮询与证据接口替换样例流程 |
+| B 后端 | [backend/app/api](backend/app/api)、[schemas](backend/app/schemas)、[worker.py](backend/app/worker.py) | 实现鉴权、MongoDB、文件与任务持久化 |
+| C RAG | [backend/app/rag/contracts.py](backend/app/rag/contracts.py) | 实现解析、向量入库、用户隔离和证据检索 |
+| D Agent | [backend/app/agent/contracts.py](backend/app/agent/contracts.py) | 添加 LangGraph 与模型依赖，实现结构化岗位分析 |
+
+公共类型由 Pydantic 导出 OpenAPI，再生成前端 TypeScript；变更后执行启动指南中的生成命令并提交生成文件。依赖版本锁定在 `backend/uv.lock` 与 `frontend/package-lock.json`。当前 Compose 只用于本地 MongoDB、Redis、Qdrant，不能直接用于生产发布。
 
 ## 五人分工
 
@@ -95,6 +106,7 @@ D 生成计划草稿并暂停 → A 确认 → B 保存正式计划并恢复执�
 | [06 开发规范](dev/06-开发规范-coding-standards.md) | 代码、接口、RAG 和 Agent 开发约定 |
 | [07 Git 协作规范](dev/07-Git协作规范-git-workflow.md) | Issue、分支、Commit、PR、审查与合并规则 |
 | [08 M1 开工计划](dev/08-M1开工计划-kickoff-plan.md) | 第一阶段范围、公共契约、首轮任务与联调验收 |
+| [09 本地启动指南](dev/09-本地开发启动-local-setup.md) | 安装、启动、目录分工、契约生成与现有检查 |
 | [合成开发样例](examples/README.md) | 简历、项目、JD、API 与 SSE 协议样例 |
 
 ## Git 协作要求

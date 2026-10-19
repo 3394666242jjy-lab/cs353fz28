@@ -1,0 +1,67 @@
+name: Scaffold checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+          python-version: "3.12"
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Lint and format
+        working-directory: backend
+        run: |
+          uv run ruff check --config pyproject.toml app tests ../scripts
+          uv run ruff format --config pyproject.toml --check app tests ../scripts
+      - name: Verify API and contracts
+        working-directory: backend
+        run: uv run pytest -q
+      - name: Validate local Compose configuration
+        run: docker compose config --quiet
+      - name: Start local infrastructure and verify real connections
+        run: |
+          docker compose up -d
+          uv run --project backend python scripts/check_infra.py --attempts 20
+      - name: Stop CI infrastructure
+        if: always()
+        run: docker compose down --volumes
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.1"
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --project backend
+          npm ci --prefix frontend
+      - name: Check generated OpenAPI and TypeScript contracts
+        run: |
+          uv run --project backend python scripts/export_openapi.py
+          npm run api:types --prefix frontend
+          git diff --exit-code -- frontend/src/api/openapi.json frontend/src/api/schema.d.ts
+      - name: Typecheck and build
+        working-directory: frontend
+        run: |
+          npm run format:check
+          npm run build
