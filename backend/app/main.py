@@ -19,7 +19,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="CareerPilot API",
         version="0.1.0",
         description=(
-            "Local M1 development. Login and /me are implemented; "
+            "Local M1 development. Login, /me and JD creation/query are implemented; "
             "other business routes remain stubs."
         ),
         responses={

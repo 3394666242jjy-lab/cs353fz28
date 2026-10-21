@@ -21,6 +21,7 @@ from app.schemas.resources import (
     UserResult,
 )
 from app.services.auth import login_user
+from app.services.jobs import load_job, save_job
 
 router = APIRouter(
     prefix="/api/v1",
@@ -86,14 +87,44 @@ async def get_document(document_id: str):
     not_implemented("B（#7）")
 
 
-@router.post("/jobs", response_model=Envelope[JobCreated], status_code=201, tags=["jobs"])
-async def create_job(payload: JobCreate):
-    not_implemented("B（#7）")
+@router.post(
+    "/jobs",
+    response_model=Envelope[JobCreated],
+    status_code=201,
+    tags=["jobs"],
+    responses=AUTH_ERRORS,
+)
+def create_job(
+    payload: JobCreate,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    try:
+        result = save_job(settings, user.id, payload)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    return Envelope(data=result, request_id=request.state.request_id)
 
 
-@router.get("/jobs/{job_id}", response_model=Envelope[JobResult], tags=["jobs"])
-async def get_job(job_id: str):
-    not_implemented("B（#7）")
+@router.get(
+    "/jobs/{job_id}", response_model=Envelope[JobResult], tags=["jobs"], responses=AUTH_ERRORS
+)
+def get_job(
+    job_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    try:
+        result = load_job(settings, user.id, job_id)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "资源不存在。"}
+        )
+    return Envelope(data=result, request_id=request.state.request_id)
 
 
 @router.post(

@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from app.schemas.common import ContractModel
 
@@ -47,7 +47,16 @@ class DocumentAccepted(ContractModel):
 class JobCreate(ContractModel):
     title: str = Field(min_length=1, max_length=200)
     company: str | None = Field(default=None, max_length=200)
-    raw_jd: str = Field(min_length=1, max_length=30000)
+    raw_jd: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
+        min_length=1, max_length=30000
+    )
+
+    @field_validator("raw_jd")
+    @classmethod
+    def reject_blank_jd(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("JD cannot contain only whitespace")
+        return value
 
 
 class JobCreated(ContractModel):

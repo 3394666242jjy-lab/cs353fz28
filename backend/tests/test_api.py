@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.dependencies import current_user
 from app.config import Settings
 from app.main import create_app
+from app.schemas.resources import UserResult
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -22,7 +24,12 @@ def test_liveness_and_capabilities_do_not_claim_business_is_implemented(client):
     meta = client.get("/api/v1/meta").json()["data"]
     assert meta["mode"] == "scaffold"
     assert meta["features"]["authentication"] is True
-    assert all(value is False for key, value in meta["features"].items() if key != "authentication")
+    assert meta["features"]["job_import"] is True
+    assert all(
+        value is False
+        for key, value in meta["features"].items()
+        if key not in {"authentication", "job_import"}
+    )
 
 
 @pytest.mark.parametrize("all_ready", [True, False])
@@ -58,8 +65,6 @@ def test_dependency_errors_never_echo_connection_credentials(monkeypatch, client
     [
         ("get", "/api/v1/documents", None),
         ("get", "/api/v1/documents/doc_1", None),
-        ("post", "/api/v1/jobs", {"title": "Demo", "raw_jd": "Synthetic JD"}),
-        ("get", "/api/v1/jobs/job_1", None),
         ("post", "/api/v1/analyses", {"job_id": "job_1", "document_ids": ["doc_1"]}),
         ("get", "/api/v1/analyses/analysis_1", None),
         ("get", "/api/v1/executions/exec_1", None),
@@ -87,6 +92,9 @@ def test_upload_does_not_claim_to_persist_file(client):
 
 
 def test_validation_rejects_user_override_without_echoing_input(client):
+    client.app.dependency_overrides[current_user] = lambda: UserResult(
+        id="user_one", email="demo@example.invalid", display_name="Demo"
+    )
     response = client.post(
         "/api/v1/jobs",
         json={"title": "Demo", "raw_jd": "Synthetic JD", "user_id": "DO-NOT-ECHO-ME"},

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "CareerPilot API",
-    "description": "Local M1 development. Login and /me are implemented; other business routes remain stubs.",
+    "description": "Local M1 development. Login, /me and JD creation/query are implemented; other business routes remain stubs.",
     "version": "0.1.0"
   },
   "paths": {
@@ -645,8 +645,33 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/jobs/{job_id}": {
@@ -656,6 +681,11 @@
         ],
         "summary": "Get Job",
         "operationId": "get_job_api_v1_jobs__job_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "job_id",
@@ -710,6 +740,26 @@
           },
           "501": {
             "description": "Business module not implemented",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1194,7 +1244,7 @@
             "default": {
               "authentication": true,
               "document_upload": false,
-              "job_import": false,
+              "job_import": true,
               "rag": false,
               "agent_analysis": false
             }

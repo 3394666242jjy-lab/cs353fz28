@@ -1,6 +1,6 @@
 # CareerPilot API 接口文档
 
-状态：v0.3 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；B 已实现本地 POST /auth/login 和 GET /me，其余有效业务请求仍返回 501 NOT_IMPLEMENTED。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
+状态：v0.3 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；B 已实现本地 POST /auth/login、GET /me、POST /jobs 和 GET /jobs/{id}，其余有效业务请求仍返回 501 NOT_IMPLEMENTED。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
 
 ## M1 必要接口与响应字段
 
@@ -61,6 +61,8 @@ M1 用轮询查询 executions，终态停止；缺少证据时直接返回分析
 文件仅支持有文本层 PDF 和 UTF-8 TXT/Markdown，最大 10 MiB；413 为过大，415 为不支持，422 为无法解析。删除和版本更新后，相关分析应显示 stale 或来源不可用。
 
 ## 岗位与分析
+
+当前 JD 实现：创建与查询都要求有效 Bearer 令牌；user_id 只从服务端鉴权结果取得，客户端额外提交 user_id 返回 422。POST /jobs 返回 201 和随机 job_id、version=1；保存 title、company、未经裁剪的 raw_jd、空 requirements 与 UTC 时间。不接受纯空白 JD。GET /jobs/{id} 按 id 和 user_id 联合查询，本人记录返回 200，其他用户的记录与不存在的记录统一返回 404 RESOURCE_NOT_FOUND。数据库故障返回脱敏的 503。当前未实现岗位列表、编辑、删除或 JD 自动拆解。
 
 | 方法与路径 | 请求 | 响应 |
 | --- | --- | --- |
