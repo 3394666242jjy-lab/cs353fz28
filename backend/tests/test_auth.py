@@ -41,7 +41,7 @@ def test_password_hash_roundtrip():
 
 def test_login_rejects_wrong_credentials(client, monkeypatch, seed_user):
     monkeypatch.setattr(
-        "app.services.users.authenticate_user",
+        "app.api.routes.authenticate_user",
         lambda email, password: seed_user if password == "correct horse battery staple" else None,
     )
     response = _login(client, seed_user["email"], "wrong password")
