@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     celery_broker_url: SecretStr = SecretStr("redis://127.0.0.1:6379/0")
     vector_store_url: str = "http://127.0.0.1:6333"
     vector_store_api_key: SecretStr | None = None
+    vector_store_collection: str = "careerpilot_chunks"
+    vector_store_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
+    vector_store_max_retries: int = Field(default=2, ge=0, le=5)
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_api_key: SecretStr | None = None
     embedding_model: str = "text-embedding-v4"
