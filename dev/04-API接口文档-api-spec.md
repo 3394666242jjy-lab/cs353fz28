@@ -1,6 +1,6 @@
 # CareerPilot API 接口文档
 
-状态：v0.3 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；有效业务请求统一返回 501 NOT_IMPLEMENTED，业务实现待完成。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
+状态：v0.3 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；B 已实现本地 POST /auth/login 和 GET /me，其余有效业务请求仍返回 501 NOT_IMPLEMENTED。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
 
 ## M1 必要接口与响应字段
 
@@ -41,7 +41,11 @@ M1 用轮询查询 executions，终态停止；缺少证据时直接返回分析
 | POST /auth/login | email, password | 200：access_token, token_type, expires_in |
 | GET /me | 无 | 200：用户资料，不含密码哈希 |
 
-密码策略、令牌有效期和限流参数在实现前由 B 与负责人确认；登出至少清理客户端令牌，服务端撤销方案在身份模块 Issue 中确定。
+当前本地实现：种子密码为 12–1024 字符，原样核对，不裁剪密码空白；邮箱去首尾空白并转小写。令牌为不透明 Bearer 字符串，默认 3600 秒过期，由 ACCESS_TOKEN_TTL_SECONDS 配置（60–86400 秒）。后端只保存令牌摘要；客户端不要解析或将其放入 URL。
+
+错误邮箱、错误密码、缺失/无效/过期令牌统一返回 401 UNAUTHORIZED 和 WWW-Authenticate: Bearer；数据库不可用返回脱敏的 503 DATABASE_UNAVAILABLE。成功响应沿用既有 Envelope、TokenResult、UserResult。Swagger 文档可通过 Authorize 输入原始令牌测试 GET /me。
+
+本地密码及会话策略随 B 的 PR 交负责人确认；公开注册、登出撤销、登录限流和生产身份策略尚未实现。当前不得将登录模块视为生产发布完成。
 
 ## 个人资料
 

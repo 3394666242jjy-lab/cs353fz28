@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "CareerPilot API",
-    "description": "Development scaffold. Business endpoints return 501 until implemented.",
+    "description": "Local M1 development. Login and /me are implemented; other business routes remain stubs.",
     "version": "0.1.0"
   },
   "paths": {
@@ -236,6 +236,26 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -297,8 +317,33 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/documents": {
@@ -1147,7 +1192,7 @@
             "type": "object",
             "title": "Features",
             "default": {
-              "authentication": false,
+              "authentication": true,
               "document_upload": false,
               "job_import": false,
               "rag": false,
@@ -2206,6 +2251,12 @@
           "display_name"
         ],
         "title": "UserResult"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }

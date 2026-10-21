@@ -21,7 +21,8 @@ def test_liveness_and_capabilities_do_not_claim_business_is_implemented(client):
     assert response.headers["x-request-id"] == response.json()["request_id"]
     meta = client.get("/api/v1/meta").json()["data"]
     assert meta["mode"] == "scaffold"
-    assert all(value is False for value in meta["features"].values())
+    assert meta["features"]["authentication"] is True
+    assert all(value is False for key, value in meta["features"].items() if key != "authentication")
 
 
 @pytest.mark.parametrize("all_ready", [True, False])
@@ -55,8 +56,6 @@ def test_dependency_errors_never_echo_connection_credentials(monkeypatch, client
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     [
-        ("post", "/api/v1/auth/login", {"email": "demo@example.invalid", "password": "demo"}),
-        ("get", "/api/v1/me", None),
         ("get", "/api/v1/documents", None),
         ("get", "/api/v1/documents/doc_1", None),
         ("post", "/api/v1/jobs", {"title": "Demo", "raw_jd": "Synthetic JD"}),

@@ -18,13 +18,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         title="CareerPilot API",
         version="0.1.0",
-        description="Development scaffold. Business endpoints return 501 until implemented.",
+        description=(
+            "Local M1 development. Login and /me are implemented; "
+            "other business routes remain stubs."
+        ),
         responses={
             404: {"model": ErrorEnvelope, "description": "Resource not found"},
             422: {"model": ErrorEnvelope, "description": "Invalid request parameters"},
             500: {"model": ErrorEnvelope, "description": "Internal service error"},
         },
     )
+    app.state.settings = settings
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,

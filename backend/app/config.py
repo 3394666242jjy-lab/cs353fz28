@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     dependency_timeout_seconds: float = Field(default=1.5, ge=0.1, le=10)
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     local_storage_dir: Path = ROOT / "storage"
+    seed_email: str = "demo@example.invalid"
+    seed_display_name: str = "Local demo"
+    seed_password: SecretStr | None = None
+    access_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
 
 
 @lru_cache

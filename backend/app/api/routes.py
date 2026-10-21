@@ -1,7 +1,10 @@
 from typing import Annotated, Literal, NoReturn
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from pymongo.errors import PyMongoError
 
+from app.api.dependencies import current_user, database_unavailable, request_settings, unauthorized
+from app.config import Settings
 from app.schemas.analysis import AnalysisCreate, AnalysisResult, Evidence
 from app.schemas.common import Envelope, ErrorEnvelope
 from app.schemas.resources import (
@@ -17,6 +20,7 @@ from app.schemas.resources import (
     TokenResult,
     UserResult,
 )
+from app.services.auth import login_user
 
 router = APIRouter(
     prefix="/api/v1",
@@ -31,14 +35,32 @@ def not_implemented(owner: str) -> NoReturn:
     )
 
 
-@router.post("/auth/login", response_model=Envelope[TokenResult], tags=["auth"])
-async def login(payload: LoginRequest):
-    not_implemented("B（#7）")
+AUTH_ERRORS = {
+    401: {"model": ErrorEnvelope, "description": "Invalid credentials or expired session"},
+    503: {"model": ErrorEnvelope, "description": "Database unavailable"},
+}
 
 
-@router.get("/me", response_model=Envelope[UserResult], tags=["auth"])
-async def get_me():
-    not_implemented("B（#7）")
+@router.post(
+    "/auth/login", response_model=Envelope[TokenResult], tags=["auth"], responses=AUTH_ERRORS
+)
+def login(
+    payload: LoginRequest,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+):
+    try:
+        token = login_user(settings, payload.email, payload.password)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if token is None:
+        raise unauthorized()
+    return Envelope(data=token, request_id=request.state.request_id)
+
+
+@router.get("/me", response_model=Envelope[UserResult], tags=["auth"], responses=AUTH_ERRORS)
+def get_me(request: Request, user: Annotated[UserResult, Depends(current_user)]):
+    return Envelope(data=user, request_id=request.state.request_id)
 
 
 @router.post(

@@ -1,6 +1,6 @@
 # CareerPilot 本地开发启动
 
-当前提供可启动代码骨架，版本 0.1.0。前端的合成样例展示、API 健康/依赖检查、公共模型、未实现路由、Worker 诊断入口和 PR 检查已经加入代码；登录、上传、资料入库、JD 保存、RAG、Agent 分析仍需对应成员实现。
+当前版本 0.1.0。前端合成样例、API 健康/依赖检查、公共模型、Worker 诊断入口和 PR 检查已加入代码；B 已实现本地种子账号、登录和 GET /me。上传、资料入库、JD 保存、RAG、Agent 分析仍需对应成员实现。
 
 ## 环境准备
 
@@ -54,10 +54,18 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 - API 文档：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。
 - GET /health/live：200 表示进程可用，不检查数据库。
 - GET /health/ready：检查实际 MongoDB、Redis、Qdrant；全部可用才返回 200，缺少服务返回 503 和脱敏状态。
-- GET /api/v1/meta：mode=scaffold，业务 feature 均为 false，不能把依赖 ready 当作 M1 完成。
-- 所有已登记的业务接口：有效参数返回 501 NOT_IMPLEMENTED；参数无效返回统一 422；当前没有假令牌、假用户或假模型结果。
+- GET /api/v1/meta：mode=scaffold，authentication=true，其余业务 feature=false，不能把依赖 ready 当作 M1 完成。
+- POST /api/v1/auth/login 和 GET /api/v1/me 已接真实 MongoDB；其余业务接口有效参数返回 501 NOT_IMPLEMENTED，参数无效返回统一 422。
 
 没有 Docker 时仍可以启动前后端查看骨架，依赖检查显示未就绪；这不构成基础设施联调完成。
+
+### 本地种子账号与登录
+
+在项目根目录执行 `uv run --project backend python scripts/seed_user.py`。未配置 SEED_PASSWORD 时，在终端输入两次自选测试密码（至少 12 字符，输入隐藏）。也可通过已忽略的根目录 .env 配置 SEED_EMAIL、SEED_DISPLAY_NAME、SEED_PASSWORD，禁止提交有效密码。默认邮箱 demo@example.invalid；重复执行不会重置已有账号密码。不要在脚本命令行参数中传密码。
+
+在 /docs 展开 POST /api/v1/auth/login，使用邮箱和自选密码测试。200 返回 access_token、token_type、expires_in。复制原始 access_token，在顶部 Authorize 的 HTTPBearer 输入框粘贴后确认，再调用 GET /api/v1/me，应只返回本人 id、email、display_name。密码错误、没有令牌或令牌过期返回 401；MongoDB 停止时登录返回 503。勿在截图、日志或 GitHub 中保存密码、有效令牌。
+
+真实 MongoDB 自查可在 PowerShell 设置 `$env:RUN_MONGO_AUTH_TESTS = "1"` 后运行后端 pytest；测试使用 careerpilot_auth_test 库内独立生成的合成账号，只清理本次生成的用户和会话，不读取或改动本地种子账号。默认不设置此变量时跳过此项。该自查验证账号创建、重复初始化保护、登录、本人资料、缺失令牌和过期会话，其他业务的跨用户隔离仍待实现后验证。
 
 ## 4 启动前端（终端二）
 

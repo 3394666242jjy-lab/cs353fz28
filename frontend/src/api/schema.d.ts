@@ -293,7 +293,7 @@ export interface components {
             /**
              * Features
              * @default {
-             *       "authentication": false,
+             *       "authentication": true,
              *       "document_upload": false,
              *       "job_import": false,
              *       "rag": false,
@@ -855,6 +855,15 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_TokenResult_"];
                 };
             };
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -884,6 +893,15 @@ export interface operations {
             };
             /** @description Business module not implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -911,6 +929,15 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_UserResult_"];
                 };
             };
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Resource not found */
             404: {
                 headers: {
@@ -940,6 +967,15 @@ export interface operations {
             };
             /** @description Business module not implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
