@@ -240,10 +240,21 @@ def test_non_json_error_response_is_handled():
     assert "bad request" in str(excinfo.value)
 
 
-def test_missing_api_key_is_rejected_at_construction():
-    """构造时缺少 API Key 立即报错（依赖未满足如实报告）。"""
-    with pytest.raises(EmbeddingError):
-        HttpEmbeddingProvider(settings(embedding_api_key=None))
+def test_local_server_without_key_omits_authorization_header():
+    """本地免鉴权推理服务（如 Ollama/vLLM）：Key 留空时构造成功且不发鉴权头。"""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return embedding_response(TEXTS)
+
+    adapter = provider(handler, embedding_api_key=None)
+    assert asyncio.run(adapter.embed_texts(TEXTS)) == [
+        [1.0] * DIMENSION,
+        [2.0] * DIMENSION,
+    ]
+    assert len(requests) == 1
+    assert "authorization" not in requests[0].headers
 
 
 def test_blank_and_empty_inputs_never_call_the_provider():

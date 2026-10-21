@@ -146,6 +146,22 @@ def test_ensure_collection_rejects_embedding_dimension_drift():
     assert excinfo.value.retryable is False
 
 
+def test_local_store_without_key_omits_api_key_header():
+    """本地 compose Qdrant（无鉴权）：Key 留空时请求不带 api-key 头。"""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return collection_config()
+        return ok()
+
+    asyncio.run(store(handler, vector_store_api_key=None).ensure_collection())
+
+    assert requests
+    assert all("api-key" not in request.headers for request in requests)
+
+
 def test_point_ids_are_deterministic_and_owner_scoped():
     """point id 确定性派生：同输入同 id，换用户/版本即不同（幂等且隔离）。"""
     first = point()

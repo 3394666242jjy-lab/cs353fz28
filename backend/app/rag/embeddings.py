@@ -5,9 +5,17 @@
 端点、模型、维度、批量、超时、重试全部来自配置，且模型与维度会随每次索引构建
 留档（开发规范要求的 embedding_model / embedding_dimension 记录）。
 
-调用 DashScope 的 OpenAI 兼容 /embeddings 端点。DashScope 另有支持 text_type
-与 output_type=dense&sparse 的原生端点，属于 M2 混合检索，届时在本模块扩展，
-调用方接口不变。
+线上协议为 OpenAI 兼容 /embeddings，切换模型/服务商只需改配置
+（EMBEDDING_BASE_URL / MODEL / DIMENSION / API_KEY）：
+
+- 在线：阿里云百炼 DashScope、OpenAI 及各类中转网关（需 API Key）；
+- 本地：Ollama / vLLM / Xinference 等自建的 OpenAI 兼容端点（免鉴权，Key 留空）。
+
+注意维度是索引级契约：换模型导致维度变化时，Qdrant 侧的 ensure_collection
+会拒绝并提示重建索引（数据库设计文档的变更规则），不会静默混用两种维度。
+
+DashScope 另有支持 text_type 与 output_type=dense&sparse 的原生端点，属于
+M2 混合检索，届时在本模块扩展，调用方接口不变。
 """
 
 import asyncio
@@ -48,7 +56,7 @@ class EmbeddingProvider(Protocol):
 
 
 class HttpEmbeddingProvider:
-    """基于 HTTP 的 Embedding 适配器（DashScope OpenAI 兼容端点）。
+    """基于 HTTP 的 Embedding 适配器（OpenAI 兼容端点，默认指向 DashScope）。
 
     ``transport`` 仅供测试注入 MockTransport，生产路径传空走默认传输。
     """
@@ -56,9 +64,11 @@ class HttpEmbeddingProvider:
     def __init__(
         self, settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None
     ) -> None:
-        if not settings.embedding_api_key:
-            raise EmbeddingError("EMBEDDING_API_KEY 未配置", retryable=False)
-        self._api_key = settings.embedding_api_key.get_secret_value()
+        # 密钥可选：在线服务（DashScope/OpenAI 等）必须配置；本地免鉴权推理服务
+        # （Ollama/vLLM/Xinference 等 OpenAI 兼容端点）留空即可，此时不发鉴权头。
+        self._api_key = (
+            settings.embedding_api_key.get_secret_value() if settings.embedding_api_key else None
+        )
         self._base_url = settings.embedding_base_url.rstrip("/")
         self._model = settings.embedding_model
         self._dimension = settings.embedding_dimension
@@ -114,7 +124,9 @@ class HttpEmbeddingProvider:
         响应解析做三重校验：按 index 排序保证顺序、数量一致、维度一致，
         防止 provider 静默改维度导致脏索引。
         """
-        headers = {"Authorization": f"Bearer {self._api_key}"}
+        headers = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
         payload = {"model": self._model, "input": texts, "dimensions": self._dimension}
         try:
             async with httpx.AsyncClient(

@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     local_storage_dir: Path = ROOT / "storage"
 
     # 向量库（Qdrant，成员 C）：地址、凭据、集合名与调用参数。
+    # 在线集群填 HTTPS 地址与 API Key；本地 compose 用 http://127.0.0.1:6333
+    # 且 Key 留空（不发鉴权头），两种形态切换只改这两项。
     # 集合为可重建索引；稠密向量维度必须与 EMBEDDING_DIMENSION 一致。
     vector_store_url: str = "http://127.0.0.1:6333"
     vector_store_api_key: SecretStr | None = None
@@ -35,7 +37,9 @@ class Settings(BaseSettings):
     # 重试退避基数（秒）：第 n 次重试等待 backoff * 2^(n-1)。
     vector_store_retry_backoff_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
 
-    # Embedding 服务（成员 C）：阿里云百炼 OpenAI 兼容端点，M1 只用稠密向量。
+    # Embedding 服务（成员 C）：OpenAI 兼容端点（默认指向阿里云百炼），M1 只用
+    # 稠密向量。换模型/服务商只改下面四项：在线服务（DashScope/OpenAI 等）必须
+    # 填 API Key；本地免鉴权推理服务（Ollama/vLLM/Xinference）Key 留空。
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_api_key: SecretStr | None = None
     embedding_model: str = "text-embedding-v4"

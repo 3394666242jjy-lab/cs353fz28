@@ -5,6 +5,12 @@ Qdrant 是可重建索引：chunk 原文与 locator 的权威副本在 MongoDB�
 version、chunk_id、index_version、deleted）。用户与版本过滤永远写在查询条件里，
 绝不"先全量取回再过滤"。
 
+运行形态切换只改配置（VECTOR_STORE_URL / VECTOR_STORE_API_KEY）：在线集群
+（Qdrant Cloud）填 HTTPS 地址与 API Key；本地开发用仓库 compose.yaml 的
+Qdrant 容器（http://127.0.0.1:6333，Key 留空即不发鉴权头）。两种形态的 REST
+行为一致，索引结构（具名 dense 向量 + payload 字段）与过滤语义完全相同，
+索引数据可按文档重建，切换环境不影响已约定的字段。
+
 适配器直接调用 Qdrant REST API：不引 SDK，也与架构文档提到的未来 Milvus 选项
 保持可替换。point id 确定性生成，因此同一文档版本重复入库是幂等的——重试只会
 覆盖同一些点，不会产生重复向量。
