@@ -1,6 +1,6 @@
 # CareerPilot 本地开发启动
 
-当前提供可启动代码骨架，版本 0.1.0。前端的合成样例展示、API 健康/依赖检查、公共模型、未实现路由、Worker 诊断入口和 PR 检查已经加入代码；登录、上传、资料入库、JD 保存、RAG、Agent 分析仍需对应成员实现。
+当前提供可启动代码骨架，版本 0.1.0。前端的合成样例展示、API 健康/依赖检查、公共模型、未实现路由、Worker 诊断入口和 PR 检查已经加入代码；登录、上传、资料入库、JD 保存、Agent 分析仍需对应成员实现。RAG 的 M1 入库与检索模块已由成员 C 实现（见下文"RAG 模块配置与本地验证"），与 B/D 的联调完成后接入业务链路。
 
 ## 环境准备
 
@@ -81,11 +81,34 @@ npm run dev
 | --- | --- | --- |
 | A 前端 | frontend/src/pages、components、api/client.ts | 真实上传、登录、任务轮询、失败与结果页面；替换显式样例模式 |
 | B 后端 | backend/app/api、services、config.py、worker.py | 鉴权、用户/业务持久化、文件管理、真实任务分发与结果保存 |
-| C RAG | backend/app/rag/contracts.py | 解析、切分、Embedding、Qdrant 入库及带位置检索 |
+| C RAG | backend/app/rag/（chunking、embeddings、vector_store、indexer、retrieval） | 与 B 约定 chunk 原文查询接口，接通 retrieve_evidence 全链路 |
 | D Agent | backend/app/agent/contracts.py | LangGraph 编排、检索工具、结构化分析、预算与错误处理 |
 | 项目负责人 | 文档、schemas 评审、Compose 和发布配置 | 确认公共契约，整合模块，最终测试、ECS 部署与报告 |
 
-RAG/Agent 当前只提供类型化协议，没有用空结果或 fixture 充当实现。后续依赖使用 `uv add` 加入后端并提交锁文件；项目当前未为未来模块预装 LangGraph 或模型 SDK。
+RAG 已实现 M1 管线（解析、切分、向量化、Qdrant 入库、证据候选检索），均为真实调用，没有用空结果或 fixture 充当实现；Agent 当前仍只提供类型化协议。RAG 实现未新增第三方依赖（httpx 已在骨架依赖中）。后续依赖使用 `uv add` 加入后端并提交锁文件；项目当前未为未来模块预装 LangGraph 或模型 SDK。
+
+## RAG 模块配置与本地验证（成员 C，#8）
+
+配置变量（根目录 `.env`，样例见 `.env.example`；均可选默认值，在线服务需填 Key）：
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `EMBEDDING_BASE_URL` | 阿里云百炼 OpenAI 兼容端点 | 换模型/服务商改此项，本地 Ollama/vLLM 等同样兼容 |
+| `EMBEDDING_API_KEY` | 空 | 在线服务必填；本地免鉴权服务留空 |
+| `EMBEDDING_MODEL` / `EMBEDDING_DIMENSION` | `text-embedding-v4` / `1024` | 随索引进 `document_versions` 留档；改维度须重建 Qdrant 索引 |
+| `EMBEDDING_BATCH_SIZE` | 10 | provider 单请求输入上限 |
+| `VECTOR_STORE_URL` / `VECTOR_STORE_API_KEY` | `http://127.0.0.1:6333` / 空 | 在线集群填 HTTPS 地址与 Key；本地 compose 保持默认且 Key 留空 |
+| `VECTOR_STORE_COLLECTION` | `careerpilot_chunks` | 可重建索引集合 |
+| `CHUNK_MAX_CHARS` | 500 | 切分目标字符数，进入 `chunking_config_version` |
+| `RETRIEVAL_TOP_K` | 5 | 证据候选默认返回数 |
+
+本地验证（无需模型 Key 的部分）：
+
+```powershell
+uv run --project backend pytest backend/tests -q
+```
+
+真实服务验证（需 `EMBEDDING_API_KEY` 与可达的 Qdrant）：执行合成样例的解析→切分→入库→检索链路，确认三个需求查询（数据库设计/缓存/Docker）的候选排序、跨用户隔离与重复入库幂等；检索结果为 chunk 元数据，quote 与 locator 由后端查 MongoDB 补齐。当前 Qdrant 指向云端集群的配置为本地 `.env` 设置，不随仓库提交。
 
 ## 更新统一接口类型
 
