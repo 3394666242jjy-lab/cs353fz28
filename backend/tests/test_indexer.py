@@ -1,3 +1,10 @@
+"""indexer 入库管线单元测试（成员 C，issue #8）。
+
+用两个真实适配器 + MockTransport 做全 HTTP 层编排测试：
+验证请求顺序（先向量化后写库）、幂等重跑、失败路径不破坏旧索引，
+以及返回给成员 B 的版本元数据完整性。
+"""
+
 import asyncio
 import json
 from pathlib import Path
@@ -21,6 +28,7 @@ UPSERT_URL = "https://qdrant.test/collections/careerpilot_chunks/points?wait=tru
 
 
 def settings(**overrides) -> Settings:
+    """构造测试配置：隔离本地 .env，可按项覆盖。"""
     values = {
         "embedding_base_url": "https://embedding.test/v1",
         "embedding_api_key": "sk-unit",
@@ -38,7 +46,7 @@ def settings(**overrides) -> Settings:
 
 
 class RoutingHandler:
-    """Routes embedding and Qdrant calls, logging every request in order."""
+    """按 URL 路由 embedding 与 Qdrant 请求，并按调用顺序记录全部请求。"""
 
     def __init__(self, *, embedding_status: int = 200) -> None:
         self.calls: list[httpx.Request] = []
@@ -64,6 +72,7 @@ class RoutingHandler:
 
 
 def pipeline(handler: RoutingHandler, **overrides):
+    """由同一个 MockTransport 构建 embedder 与 store，保证请求顺序可观测。"""
     config = settings(**overrides)
     embedder = HttpEmbeddingProvider(config, transport=httpx.MockTransport(handler))
     store = QdrantVectorStore(config, transport=httpx.MockTransport(handler))
@@ -71,14 +80,13 @@ def pipeline(handler: RoutingHandler, **overrides):
 
 
 def urls(handler: RoutingHandler) -> list[str]:
+    """取出全部请求的 URL 序列。"""
     return [str(request.url) for request in handler.calls]
 
 
-def test_project_demo_end_to_end_index_build():
-    handler = RoutingHandler()
-    embedder, store, config = pipeline(handler)
-
-    report = asyncio.run(
+def run_index(handler: RoutingHandler, *, embedder, store, config, **overrides):
+    """执行一次 index_document 的同步封装。"""
+    return asyncio.run(
         index_document(
             PROJECT_BYTES,
             user_id="user_c",
@@ -87,8 +95,17 @@ def test_project_demo_end_to_end_index_build():
             embedder=embedder,
             store=store,
             settings=config,
+            **overrides,
         )
     )
+
+
+def test_project_demo_end_to_end_index_build():
+    """端到端：4 个 chunk、行区间正确、元数据齐全、请求顺序为 向量化→删除→upsert。"""
+    handler = RoutingHandler()
+    embedder, store, config = pipeline(handler)
+
+    report = run_index(handler, embedder=embedder, store=store, config=config)
 
     assert report.chunk_count == 4
     assert [(c.locator.line_start, c.locator.line_end) for c in report.chunks] == [
@@ -111,7 +128,7 @@ def test_project_demo_end_to_end_index_build():
     assert report.document_versions[0].document_id == "doc_demo"
     assert report.document_versions[0].version == 1
 
-    # vector_id in the report must equal the point id the store derives itself.
+    # 报告中的 vector_id 必须与存储层自身派生的 point id 一致。
     first = ChunkPoint(
         chunk_id=report.chunks[0].chunk_id,
         document_id="doc_demo",
@@ -123,7 +140,7 @@ def test_project_demo_end_to_end_index_build():
     )
     assert report.chunks[0].vector_id == point_id(first)
 
-    # Order and shape: embed first, then delete the version, then upsert.
+    # 顺序与结构：先向量化，再按版本删除，最后 upsert。
     assert urls(handler) == [EMBEDDING_URL, DELETE_URL, UPSERT_URL]
     delete_body = json.loads(handler.calls[1].content)
     conditions = {item["key"]: item["match"]["value"] for item in delete_body["filter"]["must"]}
@@ -138,31 +155,12 @@ def test_project_demo_end_to_end_index_build():
 
 
 def test_reindexing_the_same_version_is_idempotent():
+    """同版本重跑两次：报告完全一致，且每次都走 删除→upsert（不追加）。"""
     handler = RoutingHandler()
     embedder, store, config = pipeline(handler)
 
-    first = asyncio.run(
-        index_document(
-            PROJECT_BYTES,
-            user_id="user_c",
-            document_id="doc_demo",
-            version=1,
-            embedder=embedder,
-            store=store,
-            settings=config,
-        )
-    )
-    second = asyncio.run(
-        index_document(
-            PROJECT_BYTES,
-            user_id="user_c",
-            document_id="doc_demo",
-            version=1,
-            embedder=embedder,
-            store=store,
-            settings=config,
-        )
-    )
+    first = run_index(handler, embedder=embedder, store=store, config=config)
+    second = run_index(handler, embedder=embedder, store=store, config=config)
 
     assert first == second
     assert [c.chunk_id for c in first.chunks] == [c.chunk_id for c in second.chunks]
@@ -172,6 +170,7 @@ def test_reindexing_the_same_version_is_idempotent():
 
 
 def test_empty_document_clears_the_version_without_embedding():
+    """空文档：不调用 Embedding，仍执行删除（清空该版本）。"""
     handler = RoutingHandler()
     embedder, store, config = pipeline(handler)
 
@@ -193,6 +192,7 @@ def test_empty_document_clears_the_version_without_embedding():
 
 
 def test_parse_failure_never_touches_embedding_or_store():
+    """解析失败直接抛出，Embedding 与存储都不被调用。"""
     handler = RoutingHandler()
     embedder, store, config = pipeline(handler)
 
@@ -213,6 +213,7 @@ def test_parse_failure_never_touches_embedding_or_store():
 
 
 def test_embedding_failure_leaves_the_previous_index_intact():
+    """Embedding 401 快失败：存储零调用，旧索引不受影响。"""
     handler = RoutingHandler(embedding_status=401)
     embedder, store, config = pipeline(handler)
 
@@ -228,16 +229,20 @@ def test_embedding_failure_leaves_the_previous_index_intact():
                 settings=config,
             )
         )
-    assert urls(handler) == [EMBEDDING_URL]  # fast-failed, store never called
+    assert urls(handler) == [EMBEDDING_URL]  # 401 不重试，存储从未被调用
 
 
 def test_dimension_drift_fails_before_deleting_the_old_index():
+    """provider 静默改维度：在删除发生前拒绝，旧索引保留。"""
+
     class DriftingEmbedder:
+        """返回 32 维向量的假 embedder，模拟服务端维度漂移。"""
+
         model_version = "text-embedding-v4"
         dimension = DIMENSION
 
         async def embed_texts(self, texts):
-            return [[0.5] * 32 for _ in texts]  # provider silently changed size
+            return [[0.5] * 32 for _ in texts]
 
     handler = RoutingHandler()
     store = QdrantVectorStore(settings(), transport=httpx.MockTransport(handler))
@@ -255,36 +260,19 @@ def test_dimension_drift_fails_before_deleting_the_old_index():
             )
         )
     assert "32" in str(excinfo.value)
-    assert handler.calls == []  # no delete sent, no upsert sent
+    assert handler.calls == []  # 未发删除、未发 upsert
 
 
 def test_index_version_moves_with_chunking_parameters():
+    """切分参数变化时 chunking_config_version 与 index_version 随之变化。"""
     handler = RoutingHandler()
     embedder, store, config = pipeline(handler)
     another_handler = RoutingHandler()
     another_embedder, another_store, another_config = pipeline(another_handler, chunk_max_chars=120)
 
-    first = asyncio.run(
-        index_document(
-            PROJECT_BYTES,
-            user_id="user_c",
-            document_id="doc_demo",
-            version=1,
-            embedder=embedder,
-            store=store,
-            settings=config,
-        )
-    )
-    second = asyncio.run(
-        index_document(
-            PROJECT_BYTES,
-            user_id="user_c",
-            document_id="doc_demo",
-            version=1,
-            embedder=another_embedder,
-            store=another_store,
-            settings=another_config,
-        )
+    first = run_index(handler, embedder=embedder, store=store, config=config)
+    second = run_index(
+        another_handler, embedder=another_embedder, store=another_store, config=another_config
     )
 
     assert first.chunking_config_version != second.chunking_config_version
@@ -292,6 +280,7 @@ def test_index_version_moves_with_chunking_parameters():
 
 
 def test_chunk_and_index_version_helpers():
+    """chunk_id 与 index_version 辅助函数：确定性与组合格式。"""
     assert make_chunk_id("doc", 1, 0) == make_chunk_id("doc", 1, 0)
     assert make_chunk_id("doc", 1, 0) != make_chunk_id("doc", 1, 1)
     assert (

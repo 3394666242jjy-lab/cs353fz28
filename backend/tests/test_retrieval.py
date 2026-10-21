@@ -1,3 +1,10 @@
+"""retrieval 证据检索单元测试（成员 C，issue #8）。
+
+用真实 embedder 与真实 store + MockTransport 验证检索链路：
+候选组装、用户与版本过滤下发、空结果给原因、失败路径不伪造证据。
+本模块只返回候选元数据，原文文本由后端查 MongoDB 补齐（不在此测试范围内）。
+"""
+
 import asyncio
 import json
 
@@ -16,12 +23,14 @@ SEARCH_URL = "https://qdrant.test/collections/careerpilot_chunks/points/search"
 
 
 def settings(**overrides) -> Settings:
+    """构造测试配置：隔离本地 .env，可按项覆盖。"""
     values = {
         "embedding_base_url": "https://embedding.test/v1",
         "embedding_api_key": "sk-unit",
         "embedding_model": "text-embedding-v4",
         "embedding_dimension": DIMENSION,
         "embedding_max_retries": 2,
+        "retrieval_top_k": 5,
         "vector_store_url": "https://qdrant.test",
         "vector_store_api_key": "qdrant-key",
         "vector_store_collection": "careerpilot_chunks",
@@ -31,6 +40,7 @@ def settings(**overrides) -> Settings:
 
 
 def hit(chunk_id: str, score: float, version: int = 1) -> dict:
+    """构造一条 Qdrant 检索命中的原始响应条目。"""
     return {
         "id": chunk_id,
         "score": score,
@@ -44,6 +54,7 @@ def hit(chunk_id: str, score: float, version: int = 1) -> dict:
 
 
 def source(hits: list[dict], *, embedding_status: int = 200):
+    """构建被测候选源（真实适配器）并返回请求记录列表。"""
     calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -75,12 +86,14 @@ def source(hits: list[dict], *, embedding_status: int = 200):
 
 
 def search_body(calls: list[httpx.Request]) -> dict:
+    """断言恰好发生一次检索请求，并返回其请求体。"""
     search_calls = [c for c in calls if str(c.url) == SEARCH_URL]
     assert len(search_calls) == 1
     return json.loads(search_calls[0].content)
 
 
 def test_retrieve_returns_ranked_candidates_with_config_version():
+    """候选保持检索返回顺序，元数据完整，且恰好按 向量化→检索 顺序发生两次调用。"""
     adapter, calls = source([hit("chunk_a", 0.71), hit("chunk_b", 0.42)])
 
     result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="数据库设计经历"))
@@ -92,7 +105,6 @@ def test_retrieve_returns_ranked_candidates_with_config_version():
     assert all(e.corpus == "personal" for e in result.evidence)
     assert result.warnings == []
     assert result.retrieval_config_version == f"dense/text-embedding-v4@{DIMENSION}/top5"
-    # Exactly one embedding call and one filtered search call, in order.
     assert [str(c.url) for c in calls] == [EMBEDDING_URL, SEARCH_URL]
     body = search_body(calls)
     conditions = {json.dumps(item, sort_keys=True) for item in body["filter"]["must"]}
@@ -103,6 +115,7 @@ def test_retrieve_returns_ranked_candidates_with_config_version():
 
 
 def test_document_versions_are_forwarded_as_version_pairs():
+    """文档版本白名单以 (document_id, version) 对的形式下发到检索过滤器。"""
     adapter, calls = source([hit("chunk_a", 0.5)])
 
     asyncio.run(
@@ -127,19 +140,18 @@ def test_document_versions_are_forwarded_as_version_pairs():
 
 
 def test_empty_result_returns_an_explicit_reason_not_fabricated_evidence():
+    """零命中返回空列表加明确原因，不伪造证据、不抛异常。"""
     adapter, calls = source([])
 
     result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="Docker 镜像部署"))
 
     assert result.evidence == []
-    assert result.warnings == [
-        "no personal evidence matched this query under the requested "
-        "user and document version filter"
-    ]
+    assert result.warnings == ["在请求的用户与文档版本范围内，没有匹配该查询的个人证据"]
     assert [str(c.url) for c in calls] == [EMBEDDING_URL, SEARCH_URL]
 
 
 def test_blank_query_is_rejected_before_any_call():
+    """空白查询在发出任何请求前即被拒绝。"""
     adapter, calls = source([hit("chunk_a", 0.5)])
 
     with pytest.raises(ValueError):
@@ -149,6 +161,7 @@ def test_blank_query_is_rejected_before_any_call():
 
 
 def test_embedding_failure_propagates_and_skips_the_search():
+    """向量化失败如实向上传播，且不会发生检索调用。"""
     adapter, calls = source([], embedding_status=401)
 
     with pytest.raises(EmbeddingError):
@@ -158,6 +171,7 @@ def test_embedding_failure_propagates_and_skips_the_search():
 
 
 def test_config_version_tracks_model_and_top_k():
+    """检索配置版本反映模型、维度与 top_k；工厂函数可按配置构建。"""
     adapter, _ = source([hit("chunk_a", 0.5)])
     assert isinstance(get_evidence_source(settings()), QdrantEvidenceSource)
 
@@ -167,7 +181,17 @@ def test_config_version_tracks_model_and_top_k():
     assert second.retrieval_config_version.endswith("/top7")
 
 
+def test_default_top_k_comes_from_settings():
+    """未显式指定 top_k 时取配置 retrieval_top_k。"""
+    adapter, calls = source([hit("chunk_a", 0.5)])
+
+    asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="q"))
+
+    assert search_body(calls)["limit"] == settings().retrieval_top_k
+
+
 def test_repeated_query_is_deterministic():
+    """同一查询重复执行结果一致。"""
     adapter, _ = source([hit("chunk_a", 0.61), hit("chunk_b", 0.31)])
 
     first = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="Redis 缓存"))

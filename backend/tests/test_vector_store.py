@@ -1,3 +1,9 @@
+"""vector_store 适配器单元测试（成员 C，issue #8）。
+
+全部用例经 httpx.MockTransport 本地运行，不触达真实 Qdrant；
+覆盖集合与索引创建、幂等自愈、维度守卫、upsert/替换结构、检索过滤与用户隔离。
+"""
+
 import asyncio
 import json
 
@@ -20,6 +26,7 @@ API_KEY = "qdrant-unit-key"
 
 
 def settings(**overrides) -> Settings:
+    """构造测试配置：_env_file=None 隔离本地 .env，可按项覆盖。"""
     values = {
         "vector_store_url": "https://qdrant.test",
         "vector_store_api_key": API_KEY,
@@ -33,10 +40,12 @@ def settings(**overrides) -> Settings:
 
 
 def store(handler, **overrides) -> QdrantVectorStore:
+    """用 MockTransport 构造向量库适配器，handler 决定每个请求的响应。"""
     return QdrantVectorStore(settings(**overrides), transport=httpx.MockTransport(handler))
 
 
 def point(**overrides) -> ChunkPoint:
+    """构造测试用 chunk 点，可按项覆盖字段。"""
     values = {
         "chunk_id": "chunk_demo",
         "document_id": "doc_demo",
@@ -51,6 +60,7 @@ def point(**overrides) -> ChunkPoint:
 
 
 def collection_config(size: int = DIMENSION) -> httpx.Response:
+    """构造"集合已存在"的 GET 响应，size 可模拟不同维度的历史集合。"""
     return httpx.Response(
         200,
         json={
@@ -62,10 +72,12 @@ def collection_config(size: int = DIMENSION) -> httpx.Response:
 
 
 def ok() -> httpx.Response:
+    """通用成功响应。"""
     return httpx.Response(200, json={"result": {"status": "ok"}})
 
 
 def test_ensure_collection_creates_named_vectors_and_payload_indexes():
+    """集合不存在时：创建具名稠密向量集合，并建立 03 文档要求的全部 payload 索引。"""
     seen: list[tuple[str, str, dict]] = []
     requests: list[httpx.Request] = []
 
@@ -104,6 +116,7 @@ def test_ensure_collection_creates_named_vectors_and_payload_indexes():
 
 
 def test_ensure_collection_skips_recreation_but_reasserts_indexes():
+    """集合已存在且维度一致：不重建集合，但仍重新断言索引（半失败状态可自愈）。"""
     created: list[str] = []
     indexed: list[str] = []
 
@@ -116,24 +129,25 @@ def test_ensure_collection_skips_recreation_but_reasserts_indexes():
 
     asyncio.run(store(handler).ensure_collection())
 
-    # The collection itself is not recreated (dimension already matches), but
-    # payload indexes are re-asserted so partial earlier failures repair.
     assert created == []
     assert len(indexed) == 7
 
 
 def test_ensure_collection_rejects_embedding_dimension_drift():
+    """已存在集合维度与配置不一致时拒绝继续，按文档要求走重建迁移。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return collection_config(size=768)
 
     with pytest.raises(VectorStoreError) as excinfo:
         asyncio.run(store(handler).ensure_collection())
 
-    assert "Dimension changes need a re-index" in str(excinfo.value)
+    assert "重建索引" in str(excinfo.value)
     assert excinfo.value.retryable is False
 
 
 def test_point_ids_are_deterministic_and_owner_scoped():
+    """point id 确定性派生：同输入同 id，换用户/版本即不同（幂等且隔离）。"""
     first = point()
     again = point()
     other_owner = point(user_id="user_other")
@@ -144,6 +158,7 @@ def test_point_ids_are_deterministic_and_owner_scoped():
 
 
 def test_upsert_sends_deterministic_ids_named_vector_and_documented_payload():
+    """upsert 请求体包含确定性 id、具名 dense 向量与 03 文档规定的 payload 字段。"""
     bodies: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -172,6 +187,8 @@ def test_upsert_sends_deterministic_ids_named_vector_and_documented_payload():
 
 
 def test_upsert_with_no_points_does_not_call_the_store():
+    """空列表不发请求。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"store must not be called: {request.url}")
 
@@ -179,6 +196,8 @@ def test_upsert_with_no_points_does_not_call_the_store():
 
 
 def test_upsert_rejects_wrong_dimension_before_sending():
+    """维度不符在发送前拒绝。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"store must not be called: {request.url}")
 
@@ -190,6 +209,7 @@ def test_upsert_rejects_wrong_dimension_before_sending():
 
 
 def test_search_always_filters_user_and_deleted_and_maps_hits():
+    """检索请求内置 user_id 与 deleted=false 过滤，响应正确映射为 SearchHit。"""
     bodies: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -233,6 +253,7 @@ def test_search_always_filters_user_and_deleted_and_maps_hits():
 
 
 def test_search_limits_to_requested_document_versions():
+    """指定文档版本时，过滤器用 should-of-must 精确限定 (document_id, version) 对。"""
     bodies: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -268,16 +289,20 @@ def test_search_limits_to_requested_document_versions():
 
 
 def test_search_on_missing_collection_names_the_setup_step():
+    """集合不存在时给出"先执行 ensure_collection"的明确提示。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, json={"status": {"error": "Collection not found"}})
 
     with pytest.raises(VectorStoreError) as excinfo:
         asyncio.run(store(handler).search(user_id="user_demo", vector=[0.2] * DIMENSION))
 
-    assert "ensure_collection first" in str(excinfo.value)
+    assert "请先执行 ensure_collection" in str(excinfo.value)
 
 
 def test_search_rejects_wrong_dimension():
+    """查询向量维度不符在发送前拒绝。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"store must not be called: {request.url}")
 
@@ -288,6 +313,7 @@ def test_search_rejects_wrong_dimension():
 
 
 def test_rate_limited_upsert_is_retried_then_succeeds(monkeypatch):
+    """429 限流按配置退避重试一次后成功。"""
     import app.rag.vector_store as module
 
     delays: list[float] = []
@@ -311,24 +337,28 @@ def test_rate_limited_upsert_is_retried_then_succeeds(monkeypatch):
 
 
 def test_personal_chunks_must_document_their_owner():
+    """personal 片段必须带 user_id，否则构造即拒绝。"""
     with pytest.raises(ValidationError):
         point(user_id=None)
     assert point(user_id="user_demo").user_id == "user_demo"
 
 
 def test_public_chunks_carry_no_owner():
+    """public 片段允许无属主，payload 中 user_id 为 null。"""
     entry = point(corpus="public", user_id=None)
     assert entry.payload()["corpus"] == "public"
     assert entry.payload()["user_id"] is None
 
 
 def test_factory_builds_store_from_explicit_settings():
+    """工厂按传入配置构建适配器，集合名可读。"""
     adapter = get_vector_store(settings(vector_store_collection="other_chunks"))
     assert isinstance(adapter, QdrantVectorStore)
     assert adapter.collection_name == "other_chunks"
 
 
 def test_vector_store_settings_reject_out_of_range_values():
+    """超时与重试次数的配置边界被 pydantic 拒绝。"""
     with pytest.raises(ValidationError):
         settings(vector_store_max_retries=9)
     with pytest.raises(ValidationError):
@@ -336,6 +366,7 @@ def test_vector_store_settings_reject_out_of_range_values():
 
 
 def test_replace_deletes_the_version_before_upserting():
+    """替换语义：先按 user/document/version 删除，再 upsert，顺序固定。"""
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -355,6 +386,7 @@ def test_replace_deletes_the_version_before_upserting():
 
 
 def test_replace_without_points_still_clears_the_version():
+    """空点列表也执行删除：零 chunk 的重索引不得残留旧点。"""
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -371,6 +403,8 @@ def test_replace_without_points_still_clears_the_version():
 
 
 def test_replace_rejects_points_from_another_version_before_any_request():
+    """点不属于目标版本时拒绝，且删除尚未发生。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"store must not be called: {request.url}")
 
@@ -384,10 +418,12 @@ def test_replace_rejects_points_from_another_version_before_any_request():
             )
         )
 
-    assert "does not belong" in str(excinfo.value)
+    assert "不属于" in str(excinfo.value)
 
 
 def test_replace_rejects_wrong_dimension_before_deleting():
+    """维度不符在删除前拒绝，坏批次不会把好索引清空。"""
+
     def handler(request: httpx.Request) -> httpx.Response:
         raise AssertionError(f"store must not be called: {request.url}")
 

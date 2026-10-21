@@ -1,14 +1,12 @@
-"""Document indexing pipeline for the RAG module (member C, issue #8).
+"""文档入库管线（RAG 模块，成员 C，issue #8）。
 
-Orchestrates the M1 ingestion flow from the architecture document:
-parse -> chunk -> embed -> write to Qdrant, returning the version metadata
-member B persists into ``document_versions`` and the chunk records for
-``chunks``. C owns this pipeline; B calls it and stores the results.
+编排架构文档定义的 M1 入库流程：解析 → 切分 → 向量化 → 写入 Qdrant，并返回
+成员 B 落库到 document_versions 所需的版本元数据，以及 chunks 集合的 chunk 记录。
+C 拥有这条管线；B 调用它并保存结果。
 
-Re-running ``index_document`` for the same (document, version) is idempotent:
-chunk ids and Qdrant point ids are deterministic, and the store replaces the
-whole version instead of appending, so retries after a partial failure and
-re-indexes with new chunking parameters leave no stale points behind.
+对同一 (document, version) 重复执行 index_document 是幂等的：chunk_id 与
+Qdrant point id 都是确定性派生，且存储层按版本整体替换而非追加，因此半失败后的
+重试、以及换了切分参数的重索引，都不会留下过期向量。
 """
 
 import uuid
@@ -34,11 +32,12 @@ from app.rag.vector_store import (
 from app.schemas.analysis import DocumentVersion, TextLocator
 from app.schemas.common import ContractModel
 
+# M1 语料固定为个人经历（架构文档）；公共知识语料在后续阶段引入。
 CORPUS = "personal"
 
 
 class IndexedChunk(ContractModel):
-    """One indexed chunk with everything member B needs for the chunks collection."""
+    """一个已索引 chunk：B 落 chunks 集合所需的全部字段（含 Qdrant point id）。"""
 
     chunk_id: str
     ordinal: int = Field(ge=0)
@@ -48,7 +47,7 @@ class IndexedChunk(ContractModel):
 
 
 class IndexedDocument(ContractModel):
-    """Result of one index build; the metadata mirrors document_versions."""
+    """一次索引构建的结果；版本元数据字段与 document_versions 一一对应。"""
 
     document_id: str
     version: int = Field(ge=1)
@@ -65,7 +64,7 @@ class IndexedDocument(ContractModel):
 
 
 def make_chunk_id(document_id: str, version: int, ordinal: int) -> str:
-    """Deterministic id so a re-index of the same version reuses its records."""
+    """由 (文档, 版本, 序号) 确定性派生 chunk_id，同版本重索引复用同一记录。"""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{document_id}:{version}:{ordinal}"))
 
 
@@ -76,7 +75,7 @@ def build_index_version(
     embedding_model: str,
     embedding_dimension: int,
 ) -> str:
-    """Index shape tag: changes whenever any pipeline component changes."""
+    """组合索引形态标签：管线任一环节变化都会得到新的 index_version。"""
     return (
         f"{parser_version}/{chunking_config_version}/{embedding_model}"
         f"@{embedding_dimension}/{DENSE_VECTOR_NAME}-Cosine"
@@ -93,13 +92,17 @@ async def index_document(
     store: VectorStore | None = None,
     settings: Settings | None = None,
 ) -> IndexedDocument:
+    """把一个文档版本入库：解析、切分、向量化、整体替换写入，返回版本元数据。
+
+    执行顺序刻意安排为"先向量化、后写存储"：模型调用失败时旧索引原样保留，
+    不会把一个好版本打成空；依赖（embedder/store/settings）均可注入以便测试。
+    """
     settings = settings or get_settings()
     embedder = embedder or get_embedding_provider(settings)
     store = store or get_vector_store(settings)
 
     parsed = parse_document(raw)
     chunks = chunk_document(parsed.lines, max_chars=settings.chunk_max_chars)
-    # Embed before writing so a model failure leaves the previous index intact.
     vectors = await embedder.embed_texts([chunk.text for chunk in chunks])
 
     index_version = build_index_version(
