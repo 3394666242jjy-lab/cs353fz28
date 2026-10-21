@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     embedding_batch_size: int = Field(default=10, ge=1, le=10)
     embedding_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
     embedding_max_retries: int = Field(default=2, ge=0, le=5)
+    chunk_max_chars: int = Field(default=500, ge=100, le=8000)
     dependency_timeout_seconds: float = Field(default=1.5, ge=0.1, le=10)
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     local_storage_dir: Path = ROOT / "storage"
