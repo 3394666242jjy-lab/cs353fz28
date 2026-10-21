@@ -98,6 +98,17 @@ class VectorStore(Protocol):
         """Index chunks for a document version; repeats are idempotent."""
         ...
 
+    async def replace_document_points(
+        self,
+        *,
+        user_id: str,
+        document_id: str,
+        version: int,
+        points: list[ChunkPoint],
+    ) -> None:
+        """Replace all points of one document version (delete stale, then upsert)."""
+        ...
+
     async def search(
         self,
         *,
@@ -192,6 +203,46 @@ class QdrantVectorStore:
         )
         if response.status_code != 200:
             raise self._status_error(response)
+
+    async def replace_document_points(
+        self,
+        *,
+        user_id: str,
+        document_id: str,
+        version: int,
+        points: list[ChunkPoint],
+    ) -> None:
+        for point in points:
+            if (point.user_id, point.document_id, point.version) != (user_id, document_id, version):
+                raise VectorStoreError(
+                    f"chunk {point.chunk_id} does not belong to {user_id}/{document_id}/v{version}",
+                    retryable=False,
+                )
+            if len(point.vector) != self._dimension:
+                # Fail before deleting so a bad batch cannot empty a good index.
+                raise VectorStoreError(
+                    f"chunk {point.chunk_id} vector is {len(point.vector)}-dim, "
+                    f"expected {self._dimension}",
+                    retryable=False,
+                )
+        filter_body = {
+            "filter": {
+                "must": [
+                    {"key": "user_id", "match": {"value": user_id}},
+                    {"key": "document_id", "match": {"value": document_id}},
+                    {"key": "version", "match": {"value": version}},
+                ]
+            }
+        }
+        response = await self._send(
+            "POST", f"/collections/{self._collection}/points/delete", json_body=filter_body
+        )
+        if response.status_code != 200:
+            raise self._status_error(response)
+        # An empty point list still clears the version: a re-index that produced
+        # no chunks must not leave the previous chunks searchable.
+        if points:
+            await self.upsert_chunks(points)
 
     async def search(
         self,

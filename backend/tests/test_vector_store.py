@@ -333,3 +333,72 @@ def test_vector_store_settings_reject_out_of_range_values():
         settings(vector_store_max_retries=9)
     with pytest.raises(ValidationError):
         settings(vector_store_timeout_seconds=120.0)
+
+
+def test_replace_deletes_the_version_before_upserting():
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return ok()
+
+    asyncio.run(
+        store(handler).replace_document_points(
+            user_id="user_demo", document_id="doc_demo", version=1, points=[point()]
+        )
+    )
+
+    assert calls == [
+        ("POST", "/collections/careerpilot_chunks/points/delete"),
+        ("PUT", "/collections/careerpilot_chunks/points"),
+    ]
+
+
+def test_replace_without_points_still_clears_the_version():
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return ok()
+
+    asyncio.run(
+        store(handler).replace_document_points(
+            user_id="user_demo", document_id="doc_demo", version=1, points=[]
+        )
+    )
+
+    assert calls == [("POST", "/collections/careerpilot_chunks/points/delete")]
+
+
+def test_replace_rejects_points_from_another_version_before_any_request():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"store must not be called: {request.url}")
+
+    with pytest.raises(VectorStoreError) as excinfo:
+        asyncio.run(
+            store(handler).replace_document_points(
+                user_id="user_demo",
+                document_id="doc_demo",
+                version=1,
+                points=[point(version=2)],
+            )
+        )
+
+    assert "does not belong" in str(excinfo.value)
+
+
+def test_replace_rejects_wrong_dimension_before_deleting():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"store must not be called: {request.url}")
+
+    with pytest.raises(VectorStoreError) as excinfo:
+        asyncio.run(
+            store(handler).replace_document_points(
+                user_id="user_demo",
+                document_id="doc_demo",
+                version=1,
+                points=[point(vector=[0.1] * 32)],
+            )
+        )
+
+    assert "32" in str(excinfo.value)
