@@ -55,8 +55,6 @@ def test_dependency_errors_never_echo_connection_credentials(monkeypatch, client
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     [
-        ("post", "/api/v1/auth/login", {"email": "demo@example.invalid", "password": "demo"}),
-        ("get", "/api/v1/me", None),
         ("get", "/api/v1/documents", None),
         ("get", "/api/v1/documents/doc_1", None),
         ("post", "/api/v1/jobs", {"title": "Demo", "raw_jd": "Synthetic JD"}),

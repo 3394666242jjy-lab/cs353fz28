@@ -1,7 +1,10 @@
+import asyncio
 from typing import Annotated, Literal, NoReturn
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 
+from app.api.deps import get_current_user
+from app.config import get_settings
 from app.schemas.analysis import AnalysisCreate, AnalysisResult, Evidence
 from app.schemas.common import Envelope, ErrorEnvelope
 from app.schemas.resources import (
@@ -17,6 +20,8 @@ from app.schemas.resources import (
     TokenResult,
     UserResult,
 )
+from app.security import create_access_token
+from app.services.users import authenticate_user, public_user
 
 router = APIRouter(
     prefix="/api/v1",
@@ -32,13 +37,27 @@ def not_implemented(owner: str) -> NoReturn:
 
 
 @router.post("/auth/login", response_model=Envelope[TokenResult], tags=["auth"])
-async def login(payload: LoginRequest):
-    not_implemented("B（#7）")
+async def login(request: Request, payload: LoginRequest):
+    user = await asyncio.to_thread(authenticate_user, payload.email, payload.password)
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "UNAUTHENTICATED", "message": "邮箱或密码不正确。"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token, expires_in = create_access_token(get_settings(), user["id"], user["email"])
+    return Envelope(
+        data=TokenResult(access_token=token, expires_in=expires_in),
+        request_id=request.state.request_id,
+    )
 
 
 @router.get("/me", response_model=Envelope[UserResult], tags=["auth"])
-async def get_me():
-    not_implemented("B（#7）")
+async def get_me(request: Request, current_user: Annotated[dict, Depends(get_current_user)]):
+    return Envelope(
+        data=UserResult(**public_user(current_user)),
+        request_id=request.state.request_id,
+    )
 
 
 @router.post(

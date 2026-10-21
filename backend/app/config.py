@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     dependency_timeout_seconds: float = Field(default=1.5, ge=0.1, le=10)
     cors_allowed_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     local_storage_dir: Path = ROOT / "storage"
+    jwt_secret: SecretStr = SecretStr("dev-only-insecure-secret-change-me")
+    jwt_expire_minutes: int = Field(default=720, ge=1, le=10080)
+    dev_seed_email: str = "dev@careerpilot.local"
+    dev_seed_password: SecretStr | None = None
 
 
 @lru_cache
