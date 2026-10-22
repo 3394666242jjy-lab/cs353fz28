@@ -93,8 +93,8 @@ A 提供前端构建和 SSE 接入说明；B 提供 API、Celery Worker、Outbox
 
 ## 分阶段实现
 
-1. M1 主线联调：文本向量检索、LangGraph 基本流程、真实 API 与引用页面，最小 Celery/Redis 分发及 MongoDB 状态轮询；只用合成资料与本地私有文件适配器。资料、接口和任务见 [M1 开工计划](08-M1开工计划-kickoff-plan.md)。
-2. M2 完善 P0：PDF、更新与删除、准备计划确认；加入 Outbox/重启恢复、SSE、Checkpoint 暂停/继续，比较混合检索及 Rerank。
+1. M1 主线联调：有文本层 PDF 与 Markdown/TXT 上传、Python 逐页解析、向量检索、LangGraph 基本流程、真实 API 与页码/行号引用页面，最小 Celery/Redis 分发及 MongoDB 状态轮询；只用合成资料与本地私有文件适配器。资料、接口和任务见 [M1 开工计划](08-M1开工计划-kickoff-plan.md)。
+2. M2 完善 P0：更新与删除、准备计划确认；加入 Outbox/重启恢复、SSE、Checkpoint 暂停/继续，比较混合检索及 Rerank；扫描件 OCR 另作扩展。
 3. M3 可选扩展：任务看板、文本模拟面试，按团队进度安排。
 4. 云端交付：负责人根据完整 P0 就绪情况整合 Compose、Actions、OSS、HTTPS 与备份，执行 ECS 发布和回滚演练；不要求 M1 前购买云资源，也不依赖所有 P1 扩展完成。
 

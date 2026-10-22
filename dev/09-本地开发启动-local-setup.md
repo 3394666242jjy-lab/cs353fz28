@@ -79,13 +79,15 @@ npm run dev
 
 | 负责人 | 主要代码入口 | 仍需完成 |
 | --- | --- | --- |
-| A 前端 | frontend/src/pages、components、api/client.ts | 真实上传、登录、任务轮询、失败与结果页面；替换显式样例模式 |
-| B 后端 | backend/app/api、services、config.py、worker.py | 鉴权、用户/业务持久化、文件管理、真实任务分发与结果保存 |
-| C RAG | backend/app/rag/contracts.py | 解析、切分、Embedding、Qdrant 入库及带位置检索 |
+| A 前端 | frontend/src/pages、components、api/client.ts | PDF/Markdown/TXT 真实上传、登录、轮询、错误与结果页面；引用区分页码/行号；替换样例模式 |
+| B 后端 | backend/app/api、services、config.py、worker.py | 鉴权、文件校验/私有存储、持久化、真实任务分发、调用 C 的 PDF/文本解析并保存结果与失败状态 |
+| C RAG | backend/app/rag/contracts.py | Python PDF 逐页解析、UTF-8 文本解析、页内切分、Embedding、Qdrant 入库及带位置检索 |
 | D Agent | backend/app/agent/contracts.py | LangGraph 编排、检索工具、结构化分析、预算与错误处理 |
 | 项目负责人 | 文档、schemas 评审、Compose 和发布配置 | 确认公共契约，整合模块，最终测试、ECS 部署与报告 |
 
 RAG/Agent 当前只提供类型化协议，没有用空结果或 fixture 充当实现。后续依赖使用 `uv add` 加入后端并提交锁文件；项目当前未为未来模块预装 LangGraph 或模型 SDK。
+
+2026-10-22 的 M1 范围调整已要求有文本层 PDF 上传和 Python 后端解析，但此骨架尚未实现解析器或上传链路。C 交付时需锁定 PDF 解析依赖，B 接入 Worker；本地验收必须上传合成多页 PDF，核对原 PDF 页码、空白页后的定位和失败状态，不能只用 Markdown 或固定样例宣布 M1 完成。详细要求见 [08 的 PDF 交付与验收](08-M1开工计划-kickoff-plan.md)。
 
 ## 更新统一接口类型
 

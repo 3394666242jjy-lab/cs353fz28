@@ -188,12 +188,13 @@ export default function App() {
                 </div>
                 <h3>添加个人资料</h3>
                 <p className="muted">
-                  M1 将支持 Markdown / TXT。当前仅选择文件，上传由后端模块接入。
+                  M1 将支持有文本层 PDF / Markdown / TXT，最大 10
+                  MiB。当前仅选择文件，上传由后端模块接入。
                 </p>
                 <label htmlFor="local-file" className="field-label">
                   本地文件预选
                 </label>
-                <input id="local-file" type="file" accept=".md,.txt" onChange={chooseFile} />
+                <input id="local-file" type="file" accept=".pdf,.md,.txt" onChange={chooseFile} />
                 <p className="small" role="status">
                   {selectedFile
                     ? `已选择 ${selectedFile}，尚未上传。`
