@@ -85,7 +85,7 @@ npm run dev
 | D Agent | backend/app/agent/contracts.py | LangGraph 编排、检索工具、结构化分析、预算与错误处理 |
 | 项目负责人 | 文档、schemas 评审、Compose 和发布配置 | 确认公共契约，整合模块，最终测试、ECS 部署与报告 |
 
-RAG/Agent 当前只提供类型化协议，没有用空结果或 fixture 充当实现。后续依赖使用 `uv add` 加入后端并提交锁文件；项目当前未为未来模块预装 LangGraph 或模型 SDK。
+RAG 当前提供类型化协议。D 已加入 LangGraph 模块、隔离模型配置与明确标注的离线演示，接入说明见 [10 Agent 模块接入](10-Agent模块接入-agent-guide.md)。真实生成模型与 B/C 全链路尚待联调，API 能力开关不因此提前启用。后续依赖使用 `uv add` 加入后端并提交锁文件。
 
 2026-10-22 的 M1 范围调整已要求有文本层 PDF 上传和 Python 后端解析，但此骨架尚未实现解析器或上传链路。C 交付时需锁定 PDF 解析依赖，B 接入 Worker；本地验收必须上传合成多页 PDF，核对原 PDF 页码、空白页后的定位和失败状态，不能只用 Markdown 或固定样例宣布 M1 完成。详细要求见 [08 的 PDF 交付与验收](08-M1开工计划-kickoff-plan.md)。
 
