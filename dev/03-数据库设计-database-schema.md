@@ -1,12 +1,13 @@
 # CareerPilot 数据库设计
 
-状态：v0.3 设计草案与 M1 契约候选版。负责人维护逻辑设计，B 实现业务集合，C 实现片段及 Qdrant 映射，D 与 B 约定分析结构。当前未创建生产数据库。
+状态：v0.4 设计草案与 M1 契约候选版。负责人维护逻辑设计，B 实现业务集合，C 实现片段及 Qdrant 映射，D 与 B 约定分析结构。当前未创建生产数据库。
 
 ## M1 数据范围
 
 首轮只需要 users、documents、document_versions、chunks、jobs、analyses 和 executions。users 由本地种子脚本初始化，所有私有集合验证 user_id。文件 storage_key/extracted_text_key 先指向本地私有适配器，不改变未来迁移 OSS 的逻辑字段。
 
 - 固定版本 1：保留 version/current_version、来源位置及 content_hash，M1 不实现资料编辑和完整删除界面。
+- PDF 与文本均属 M1：documents 保存实际 media_type/size_bytes 与原始私有文件；document_versions 的 extracted_text_key 指向版本化提取结果。PDF 提取结果逐页保存原始页码与文本，chunks.locator 使用 {kind: pdf, page: 1 起始页码}，chunk 不跨页；Markdown/TXT 使用 {kind: text, line_start, line_end}。解析器版本随文档版本保存，空白页不重排页码，解析失败不写成 ready。
 - jobs 保存原始 JD；D 的拆解要求存为 analyses.requirement_snapshot，不覆盖用户输入或自动改动 job_version。
 - executions 只进入 queued/running/succeeded/failed；缺失信息写入分析结果，pending_input=null。M1 没有 SSE 时 latest_event_id 可为 null。
 - technical_retries、worker_id、lease_until 等完整恢复字段可按需预留；不得把尚未实现的 Outbox 或恢复逻辑当成 M1 已完成。
