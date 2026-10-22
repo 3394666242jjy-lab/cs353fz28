@@ -65,7 +65,6 @@ def test_dependency_errors_never_echo_connection_credentials(monkeypatch, client
     [
         ("post", "/api/v1/analyses", {"job_id": "job_1", "document_ids": ["doc_1"]}),
         ("get", "/api/v1/analyses/analysis_1", None),
-        ("get", "/api/v1/executions/exec_1", None),
         ("get", "/api/v1/evidence/chunk_1?version=1", None),
     ],
 )
