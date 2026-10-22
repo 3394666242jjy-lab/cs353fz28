@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.dependencies import current_user
 from app.config import Settings
 from app.main import create_app
-from app.schemas.resources import UserResult
+from app.schemas.resources import DocumentResult, UserResult
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -63,11 +63,8 @@ def test_dependency_errors_never_echo_connection_credentials(monkeypatch, client
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     [
-        ("get", "/api/v1/documents", None),
-        ("get", "/api/v1/documents/doc_1", None),
         ("post", "/api/v1/analyses", {"job_id": "job_1", "document_ids": ["doc_1"]}),
         ("get", "/api/v1/analyses/analysis_1", None),
-        ("get", "/api/v1/executions/exec_1", None),
         ("get", "/api/v1/evidence/chunk_1?version=1", None),
     ],
 )
@@ -89,6 +86,49 @@ def test_upload_does_not_claim_to_persist_file(client):
     )
     assert response.status_code == 501
     assert "document_id" not in response.json()
+
+
+def test_document_queries_require_authentication(client):
+    assert client.get("/api/v1/documents").status_code == 401
+    assert client.get("/api/v1/documents/doc_1").status_code == 401
+
+
+def test_document_queries_are_owner_scoped(client, monkeypatch):
+    seen = {}
+    client.app.dependency_overrides[current_user] = lambda: UserResult(
+        id="user_one", email="demo@example.invalid", display_name="Demo"
+    )
+
+    def fake_list(settings, user_id, cursor=None, limit=20):
+        seen["user_id"] = user_id
+        return (
+            [
+                DocumentResult(
+                    id="doc_1",
+                    kind="resume",
+                    filename="resume.pdf",
+                    current_version=1,
+                    status="uploaded",
+                )
+            ],
+            None,
+        )
+
+    monkeypatch.setattr("app.api.routes.documents_list", fake_list)
+    response = client.get("/api/v1/documents")
+    assert response.status_code == 200
+    assert seen["user_id"] == "user_one"
+    assert response.json()["data"]["items"][0]["id"] == "doc_1"
+
+
+def test_document_detail_returns_not_found_for_missing_document(client, monkeypatch):
+    monkeypatch.setattr("app.api.routes.documents_get", lambda settings, user_id, doc_id: None)
+    client.app.dependency_overrides[current_user] = lambda: UserResult(
+        id="user_one", email="demo@example.invalid", display_name="Demo"
+    )
+    response = client.get("/api/v1/documents/doc_missing")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 def test_validation_rejects_user_override_without_echoing_input(client):

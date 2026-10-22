@@ -21,6 +21,9 @@ from app.schemas.resources import (
     UserResult,
 )
 from app.services.auth import login_user
+from app.services.documents import get_document as documents_get
+from app.services.documents import list_documents as documents_list
+from app.services.executions import get_execution as executions_get
 from app.services.jobs import load_job, save_job
 
 router = APIRouter(
@@ -75,16 +78,51 @@ async def upload_document(
     not_implemented("B/C（#7、#8）")
 
 
-@router.get("/documents", response_model=Envelope[DocumentPage], tags=["documents"])
-async def list_documents(
-    cursor: str | None = None, limit: Annotated[int, Query(ge=1, le=100)] = 20
+@router.get(
+    "/documents",
+    response_model=Envelope[DocumentPage],
+    tags=["documents"],
+    responses=AUTH_ERRORS,
+)
+def list_documents(
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
 ):
-    not_implemented("B（#7）")
+    try:
+        items, next_cursor = documents_list(settings, user.id, cursor=cursor, limit=limit)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    return Envelope(
+        data=DocumentPage(items=items, next_cursor=next_cursor),
+        request_id=request.state.request_id,
+    )
 
 
-@router.get("/documents/{document_id}", response_model=Envelope[DocumentResult], tags=["documents"])
-async def get_document(document_id: str):
-    not_implemented("B（#7）")
+@router.get(
+    "/documents/{document_id}",
+    response_model=Envelope[DocumentResult],
+    tags=["documents"],
+    responses=AUTH_ERRORS | {404: {"model": ErrorEnvelope, "description": "Document not found"}},
+)
+def get_document(
+    document_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    try:
+        document = documents_get(settings, user.id, document_id)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "资料不存在或不属于当前用户。"},
+        )
+    return Envelope(data=document, request_id=request.state.request_id)
 
 
 @router.post(
@@ -140,10 +178,27 @@ async def get_analysis(analysis_id: str):
 
 
 @router.get(
-    "/executions/{execution_id}", response_model=Envelope[ExecutionResult], tags=["execution"]
+    "/executions/{execution_id}",
+    response_model=Envelope[ExecutionResult],
+    tags=["execution"],
+    responses=AUTH_ERRORS | {404: {"model": ErrorEnvelope, "description": "Execution not found"}},
 )
-async def get_execution(execution_id: str):
-    not_implemented("B（#7）")
+def get_execution(
+    execution_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    try:
+        execution = executions_get(settings, user.id, execution_id)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "任务不存在或不属于当前用户。"},
+        )
+    return Envelope(data=execution, request_id=request.state.request_id)
 
 
 @router.get("/evidence/{chunk_id}", response_model=Envelope[Evidence], tags=["evidence"])
