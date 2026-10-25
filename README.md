@@ -56,7 +56,7 @@ P0/P1 表示最终交付优先级；实现顺序另按里程碑划分：
 | A 前端 | [frontend/src](frontend/src) | 用真实上传、JD、轮询与证据接口替换样例流程 |
 | B 后端 | [backend/app/api](backend/app/api)、[schemas](backend/app/schemas)、[worker.py](backend/app/worker.py) | 实现鉴权、MongoDB、文件与任务持久化 |
 | C RAG | [backend/app/rag/contracts.py](backend/app/rag/contracts.py) | 在 Python 后端实现 PDF 逐页解析、文本切分、向量入库、用户隔离和带位置证据检索 |
-| D Agent | [backend/app/agent/contracts.py](backend/app/agent/contracts.py) | 添加 LangGraph 与模型依赖，实现结构化岗位分析 |
+| D Agent | [backend/app/agent/pipeline.py](backend/app/agent/pipeline.py)、[接入说明](dev/10-Agent模块接入-agent-guide.md) | 已实现 M1 图与结构化校验；真实模型和 B/C 全链路待联调 |
 
 公共类型由 Pydantic 导出 OpenAPI，再生成前端 TypeScript；变更后执行启动指南中的生成命令并提交生成文件。依赖版本锁定在 `backend/uv.lock` 与 `frontend/package-lock.json`。当前 Compose 只用于本地 MongoDB、Redis、Qdrant，不能直接用于生产发布。
 
@@ -107,6 +107,7 @@ D 生成计划草稿并暂停 → A 确认 → B 保存正式计划并恢复执�
 | [07 Git 协作规范](dev/07-Git协作规范-git-workflow.md) | Issue、分支、Commit、PR、审查与合并规则 |
 | [08 M1 开工计划](dev/08-M1开工计划-kickoff-plan.md) | 第一阶段范围、公共契约、首轮任务与联调验收 |
 | [09 本地启动指南](dev/09-本地开发启动-local-setup.md) | 安装、启动、目录分工、契约生成与现有检查 |
+| [10 Agent 模块接入](dev/10-Agent模块接入-agent-guide.md) | D 的 M1 图、离线演示、模型配置、B/C 接入边界与待联调事项 |
 | [合成开发样例](examples/README.md) | 简历、项目、JD、API 与 SSE 协议样例 |
 
 ## Git 协作要求
