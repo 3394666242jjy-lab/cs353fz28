@@ -1,6 +1,6 @@
 # CareerPilot 本地开发启动
 
-当前提供可启动代码骨架，版本 0.1.0。前端的合成样例展示、API 健康/依赖检查、公共模型、未实现路由、Worker 诊断入口和 PR 检查已经加入代码；登录、上传、资料入库、JD 保存、Agent 分析仍需对应成员实现。RAG 的 M1 入库与检索模块已由成员 C 实现（见下文"RAG 模块配置与本地验证"），与 B/D 的联调完成后接入业务链路。
+当前提供可启动代码骨架，版本 0.1.0。前端的合成样例展示、API 健康/依赖检查、公共模型、未实现路由、Worker 诊断入口和 PR 检查已经加入代码；登录、真实上传、JD 保存和完整分析 API 仍待接入。C 已实现 Markdown/TXT 入库及候选检索模块（见下文），D 已加入 LangGraph 分析模块；PDF 解析、真实生成模型与 B/C/D 全链路尚待完成，不能把模块就绪当成 M1 验收通过。
 
 ## 环境准备
 
@@ -79,13 +79,15 @@ npm run dev
 
 | 负责人 | 主要代码入口 | 仍需完成 |
 | --- | --- | --- |
-| A 前端 | frontend/src/pages、components、api/client.ts | 真实上传、登录、任务轮询、失败与结果页面；替换显式样例模式 |
-| B 后端 | backend/app/api、services、config.py、worker.py | 鉴权、用户/业务持久化、文件管理、真实任务分发与结果保存 |
-| C RAG | backend/app/rag/（chunking、embeddings、vector_store、indexer、retrieval） | 与 B 约定 chunk 原文查询接口，接通 retrieve_evidence 全链路 |
-| D Agent | backend/app/agent/contracts.py | LangGraph 编排、检索工具、结构化分析、预算与错误处理 |
+| A 前端 | frontend/src/pages、components、api/client.ts | PDF/Markdown/TXT 真实上传、登录、轮询、错误与结果页面；引用区分页码/行号；替换样例模式 |
+| B 后端 | backend/app/api、services、config.py、worker.py | 鉴权、文件校验/私有存储、持久化、真实任务分发、调用 C 的 PDF/文本解析并保存结果与失败状态 |
+| C RAG | backend/app/rag/（chunking、embeddings、vector_store、indexer、retrieval） | 补齐 Python PDF 逐页解析和页内切分；与 B 约定原文查询接口，接通完整证据检索 |
+| D Agent | backend/app/agent/pipeline.py、contracts.py | 真实生成模型、B/C 完整 Evidence 适配器与 PDF 全链路联调 |
 | 项目负责人 | 文档、schemas 评审、Compose 和发布配置 | 确认公共契约，整合模块，最终测试、ECS 部署与报告 |
 
-RAG 已实现 M1 管线（解析、切分、向量化、Qdrant 入库、证据候选检索），均为真实调用，没有用空结果或 fixture 充当实现；Agent 当前仍只提供类型化协议。RAG 实现未新增第三方依赖（httpx 已在骨架依赖中）。后续依赖使用 `uv add` 加入后端并提交锁文件；项目当前未为未来模块预装 LangGraph 或模型 SDK。
+RAG 已实现 UTF-8 Markdown/TXT 解析、切分、Embedding、Qdrant 入库与证据候选检索，候选对应的原文及定位仍需由 B 查询权威存储后补齐；本模块使用已有 httpx 依赖。D 已加入 LangGraph 模块、隔离模型配置与明确标注的离线演示，接入说明见 [10 Agent 模块接入](10-Agent模块接入-agent-guide.md)。真实生成模型与 B/C 全链路尚待联调，API 能力开关不因此提前启用。后续依赖使用 `uv add` 加入后端并提交锁文件。
+
+2026-10-22 的 M1 范围调整已要求有文本层 PDF 上传和 Python 后端解析，但当前 RAG 尚未实现 PDF 解析器，真实上传链路也仍待接入。C 交付时需锁定 PDF 解析依赖，B 接入 Worker；本地验收必须上传合成多页 PDF，核对原 PDF 页码、空白页后的定位和失败状态，不能只用 Markdown 或固定样例宣布 M1 完成。详细要求见 [08 的 PDF 交付与验收](08-M1开工计划-kickoff-plan.md)。
 
 ## RAG 模块配置与本地验证（成员 C，#8）
 
