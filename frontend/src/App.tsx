@@ -1,8 +1,10 @@
-import { useEffect, useState, type ChangeEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from './api/client';
 import { sampleInputs } from './api/fixtures';
 import StatusBadge from './components/StatusBadge';
 import AnalysisPanel from './pages/AnalysisPanel';
+import DocumentUpload from './pages/DocumentUpload';
+import JdImport from './pages/JdImport';
 
 const steps = ['资料准备', '目标岗位', '匹配分析'];
 type Connection = 'checking' | 'connected' | 'disconnected';
@@ -15,7 +17,7 @@ export default function App() {
   const [probeMessage, setProbeMessage] = useState('');
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [documentIds, setDocumentIds] = useState<string[]>([]);
   const [title, setTitle] = useState('后端开发实习生');
   const [jd, setJd] = useState('');
 
@@ -36,17 +38,9 @@ export default function App() {
   function loadSample() {
     setSampleLoaded(true);
     setAnalysisVisible(false);
-    setSelectedFile(null);
     setTitle('后端开发实习生');
     setJd(sampleInputs.jdText);
     setStep(1);
-  }
-
-  function chooseFile(event: ChangeEvent<HTMLInputElement>) {
-    setSelectedFile(event.target.files?.[0]?.name ?? null);
-    setSampleLoaded(false);
-    setAnalysisVisible(false);
-    event.target.value = '';
   }
 
   function editJd(value: string) {
@@ -164,9 +158,10 @@ export default function App() {
           <p>整理个人资料，选择目标岗位，再查看每条要求对应的证据。</p>
         </div>
         <div className="demo-notice">
-          <span className="notice-label">样例模式</span>
+          <span className="notice-label">开发预览</span>
           <p>
-            这里使用合成资料展示交互。选择文件不会上传，也不会调用模型；真实上传、登录和分析接口尚未实现。
+            上传与分析已接入 M1 契约，但后端业务接口尚未实现（返回 501），需等 B 的 #7 与 C 的 #8
+            合并后再联调；点「样例演练」可离线预览完整交互。
           </p>
         </div>
 
@@ -188,18 +183,9 @@ export default function App() {
                 </div>
                 <h3>添加个人资料</h3>
                 <p className="muted">
-                  M1 将支持有文本层 PDF / Markdown / TXT，最大 10
-                  MiB。当前仅选择文件，上传由后端模块接入。
+                  M1 支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。
                 </p>
-                <label htmlFor="local-file" className="field-label">
-                  本地文件预选
-                </label>
-                <input id="local-file" type="file" accept=".pdf,.md,.txt" onChange={chooseFile} />
-                <p className="small" role="status">
-                  {selectedFile
-                    ? `已选择 ${selectedFile}，尚未上传。`
-                    : '未选择文件；本页不会保存你的个人资料。'}
-                </p>
+                <DocumentUpload onReadyChange={setDocumentIds} />
               </div>
               <div className="panel sample-panel">
                 <span className="eyebrow">无需个人资料</span>
@@ -271,10 +257,12 @@ export default function App() {
                   ? '已载入匹配的合成资料。可以查看固定样例分析。'
                   : '自定义内容的真实分析尚未接入；载入示例可预览完整交互。'}
               </p>
+
               <div className="form-actions">
                 <button className="text-button" onClick={() => setStep(0)}>
                   返回资料准备
                 </button>
+
                 <button
                   className="primary-button"
                   disabled={!sampleLoaded}
@@ -287,6 +275,8 @@ export default function App() {
                   查看样例分析 <span aria-hidden="true">→</span>
                 </button>
               </div>
+
+              <JdImport jd={jd} title={title} documentIds={documentIds} />
             </div>
           </section>
         )}
