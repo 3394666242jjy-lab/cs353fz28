@@ -422,6 +422,11 @@
         ],
         "summary": "List Documents",
         "operationId": "list_documents_api_v1_documents_get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "cursor",
@@ -502,6 +507,26 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -513,6 +538,11 @@
         ],
         "summary": "Get Document",
         "operationId": "get_document_api_v1_documents__document_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "document_id",
@@ -536,7 +566,7 @@
             }
           },
           "404": {
-            "description": "Resource not found",
+            "description": "Document not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -567,6 +597,26 @@
           },
           "501": {
             "description": "Business module not implemented",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -921,6 +971,11 @@
         ],
         "summary": "Get Execution",
         "operationId": "get_execution_api_v1_executions__execution_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "execution_id",
@@ -944,7 +999,7 @@
             }
           },
           "404": {
-            "description": "Resource not found",
+            "description": "Execution not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -975,6 +1030,26 @@
           },
           "501": {
             "description": "Business module not implemented",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
             "content": {
               "application/json": {
                 "schema": {
