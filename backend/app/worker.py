@@ -11,16 +11,28 @@ from hashlib import sha256
 from typing import Any
 
 from celery import Celery
+from pydantic import TypeAdapter
 
 from app.config import get_settings
+from app.schemas.analysis import DocumentVersion, Evidence, PdfLocator, TextLocator
 from app.schemas.resources import ExecutionError
+from app.services.analyses import (
+    get_analysis,
+    save_analysis_result,
+    set_analysis_failed,
+)
 from app.services.documents import (
     IndexedVersionPayload,
+    get_document,
+    list_chunks_by_ids,
     save_indexed_version,
     set_document_status,
 )
 from app.services.executions import transition_execution
+from app.services.jobs import load_job
 from app.services.storage import read_upload, save_extracted_text
+
+LocatorAdapter: TypeAdapter[TextLocator | PdfLocator] = TypeAdapter(TextLocator | PdfLocator)
 
 settings = get_settings()
 celery_app = Celery("careerpilot", broker=settings.celery_broker_url.get_secret_value())
@@ -184,4 +196,143 @@ def run_indexing(
         status="succeeded",
         result_type="document",
         result_id=document_id,
+    )
+
+
+def _load_agent() -> Any:
+    """Import member D's agent lazily; raises when it is not integrated yet."""
+    try:
+        from app.agent.config import get_agent_settings
+        from app.agent.pipeline import LangGraphAnalysisAgent
+        from app.agent.provider import ChatCompletionModel
+    except ImportError as exc:
+        raise RuntimeError("分析 Agent 模块（app.agent，成员 D）尚未集成") from exc
+    agent_settings = get_agent_settings()
+    agent_settings.check_provider()
+    return LangGraphAnalysisAgent(ChatCompletionModel(agent_settings))
+
+
+class _MongoEvidenceRetriever:
+    """Fills member C's candidate metadata with quote/locator/filename from MongoDB.
+
+    C's retrieval returns only identities and scores (see issue #8); assembling
+    the full Evidence contract from owner-scoped chunk rows is B's job, which
+    is also what GET /evidence/{chunk_id} serves.
+    """
+
+    def __init__(self, settings_obj: Any, source: Any) -> None:
+        self._settings = settings_obj
+        self._source = source
+
+    async def retrieve_evidence(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        document_versions: list[DocumentVersion],
+        top_k: int = 5,
+    ) -> list[Evidence]:
+        result = await self._source.retrieve_evidence(
+            user_id=user_id,
+            query=query,
+            document_versions=document_versions,
+            top_k=top_k,
+        )
+        candidates = result.evidence
+        rows = {
+            row["id"]: row
+            for row in list_chunks_by_ids(
+                self._settings, user_id, [candidate.chunk_id for candidate in candidates]
+            )
+        }
+        evidence: list[Evidence] = []
+        for candidate in candidates:
+            row = rows.get(candidate.chunk_id)
+            if row is None:
+                continue
+            document = get_document(self._settings, user_id, candidate.document_id)
+            if document is None:
+                continue
+            evidence.append(
+                Evidence(
+                    chunk_id=candidate.chunk_id,
+                    document_id=candidate.document_id,
+                    version=candidate.version,
+                    filename=document.filename,
+                    source_type="personal" if candidate.corpus == "personal" else "public",
+                    locator=LocatorAdapter.validate_python(row["locator"]),
+                    quote=row["text"],
+                )
+            )
+        return evidence
+
+
+def _build_retriever(settings_obj: Any) -> _MongoEvidenceRetriever:
+    """Wire C's candidate source to B's MongoDB evidence assembly, lazily."""
+    try:
+        from app.rag.retrieval import QdrantEvidenceSource
+    except ImportError as exc:
+        raise RuntimeError("证据检索模块（app.rag.retrieval，成员 C）尚未集成") from exc
+    return _MongoEvidenceRetriever(settings_obj, QdrantEvidenceSource(settings_obj))
+
+
+@celery_app.task(name="careerpilot.run_analysis")
+def run_analysis_task(analysis_id: str, user_id: str, execution_id: str) -> None:
+    """Run one analysis and persist the outcome."""
+    run_analysis(settings, analysis_id, user_id, execution_id)
+
+
+def run_analysis(settings_obj: Any, analysis_id: str, user_id: str, execution_id: str) -> None:
+    """Synchronous core of the analysis task, separated for direct testing."""
+    row = get_analysis(settings_obj, user_id, analysis_id)
+    if row is None:
+        _fail(settings_obj, user_id, execution_id, 1, "ANALYSIS_MISSING", "分析记录不存在。")
+        return
+    job = load_job(settings_obj, user_id, row["job_id"])
+    if job is None:
+        message = "岗位不存在，无法执行分析。"
+        _fail(settings_obj, user_id, execution_id, 1, "JOB_MISSING", message)
+        set_analysis_failed(settings_obj, user_id, analysis_id, error=message)
+        return
+    if not transition_execution(
+        settings_obj, user_id, execution_id, expected_state_version=1, status="running"
+    ):
+        _fail(
+            settings_obj,
+            user_id,
+            execution_id,
+            2,
+            "STALE_EXECUTION",
+            "任务状态已变化，放弃本次执行。",
+        )
+        return
+    try:
+        agent = _load_agent()
+        retriever = _build_retriever(settings_obj)
+        document_versions = [
+            DocumentVersion.model_validate(item) for item in row["document_versions"]
+        ]
+        result = asyncio.run(
+            agent.run_analysis(
+                user_id=user_id,
+                job=job,
+                document_versions=document_versions,
+                retriever=retriever,
+            )
+        )
+        if not save_analysis_result(settings_obj, user_id, analysis_id, result):
+            raise RuntimeError("分析结果保存失败：记录已被并发更新。")
+    except Exception as exc:  # noqa: BLE001 - any failure must fail the execution
+        message = f"分析执行失败：{exc}"[:500]
+        _fail(settings_obj, user_id, execution_id, 2, "ANALYSIS_FAILED", message)
+        set_analysis_failed(settings_obj, user_id, analysis_id, error=message)
+        return
+    transition_execution(
+        settings_obj,
+        user_id,
+        execution_id,
+        expected_state_version=2,
+        status="succeeded",
+        result_type="analysis",
+        result_id=analysis_id,
     )

@@ -19,9 +19,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="CareerPilot API",
         version="0.1.0",
         description=(
-            "Local M1 development. Login, /me, JD creation/query and document "
-            "upload with indexing executions are implemented; analysis routes "
-            "remain stubs."
+            "Local M1 development. Login, /me, jobs, document upload with "
+            "indexing executions, evidence lookup and the analysis flow are "
+            "implemented; C's RAG pipeline and D's agent integrate via the "
+            "workers on the integration branch."
         ),
         responses={
             404: {"model": ErrorEnvelope, "description": "Resource not found"},
