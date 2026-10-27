@@ -28,7 +28,7 @@ def test_liveness_and_capabilities_do_not_claim_business_is_implemented(client):
     assert all(
         value is False
         for key, value in meta["features"].items()
-        if key not in {"authentication", "job_import"}
+        if key not in {"authentication", "job_import", "document_upload"}
     )
 
 
@@ -65,7 +65,6 @@ def test_dependency_errors_never_echo_connection_credentials(monkeypatch, client
     [
         ("post", "/api/v1/analyses", {"job_id": "job_1", "document_ids": ["doc_1"]}),
         ("get", "/api/v1/analyses/analysis_1", None),
-        ("get", "/api/v1/evidence/chunk_1?version=1", None),
     ],
 )
 def test_unimplemented_business_never_returns_fake_success(client, method, path, payload):
@@ -78,14 +77,252 @@ def test_unimplemented_business_never_returns_fake_success(client, method, path,
     assert "data" not in response.json()
 
 
-def test_upload_does_not_claim_to_persist_file(client):
+def _auth_as_user_one(client):
+    client.app.dependency_overrides[current_user] = lambda: UserResult(
+        id="user_one", email="demo@example.invalid", display_name="Demo"
+    )
+
+
+def _multipart(content: bytes, filename: str = "demo.md"):
+    return {"file": (filename, content, "application/octet-stream")}
+
+
+def test_upload_requires_authentication(client):
+    response = client.post(
+        "/api/v1/documents", files=_multipart(b"synthetic input"), data={"kind": "resume"}
+    )
+    assert response.status_code == 401
+
+
+def test_upload_rejects_empty_file(client):
+    _auth_as_user_one(client)
+    response = client.post(
+        "/api/v1/documents", files=_multipart(b"", "empty.md"), data={"kind": "resume"}
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_INPUT"
+
+
+def test_upload_rejects_oversized_file(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.create_document",
+        lambda *args, **kwargs: pytest.fail("oversized upload must not persist"),
+    )
     response = client.post(
         "/api/v1/documents",
-        files={"file": ("demo.md", b"synthetic input", "text/markdown")},
+        files=_multipart(b"x" * (10 * 1024 * 1024 + 1), "big.md"),
         data={"kind": "resume"},
     )
-    assert response.status_code == 501
-    assert "document_id" not in response.json()
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "FILE_TOO_LARGE"
+
+
+def test_upload_rejects_unsupported_file_type(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.create_document",
+        lambda *args, **kwargs: pytest.fail("unsupported upload must not persist"),
+    )
+    response = client.post(
+        "/api/v1/documents", files=_multipart(b"content", "demo.docx"), data={"kind": "project"}
+    )
+    assert response.status_code == 415
+    assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
+
+
+def test_upload_persists_file_and_dispatches_index_task(client, tmp_path, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(client.app.state.settings, "local_storage_dir", tmp_path / "storage")
+    monkeypatch.setattr("app.api.routes.create_document", lambda *a, **k: "doc_new")
+    monkeypatch.setattr("app.api.routes.create_execution", lambda *a, **k: "exec_new")
+    dispatched = {}
+    monkeypatch.setattr(
+        "app.api.routes.dispatch_index_task",
+        lambda settings, **kwargs: dispatched.update(kwargs),
+    )
+    response = client.post(
+        "/api/v1/documents",
+        files=_multipart(b"# Demo resume", "resume.md"),
+        data={"kind": "resume"},
+    )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["data"] == {
+        "document_id": "doc_new",
+        "execution_id": "exec_new",
+        "status": "processing",
+    }
+    assert dispatched["user_id"] == "user_one"
+    assert dispatched["document_id"] == "doc_new"
+    assert dispatched["version"] == 1
+    assert dispatched["execution_id"] == "exec_new"
+    stored = (tmp_path / "storage" / dispatched["storage_key"]).read_bytes()
+    assert stored == b"# Demo resume"
+
+
+def test_upload_dispatch_failure_fails_execution_and_document(client, tmp_path, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(client.app.state.settings, "local_storage_dir", tmp_path / "storage")
+    monkeypatch.setattr("app.api.routes.create_document", lambda *a, **k: "doc_new")
+    monkeypatch.setattr("app.api.routes.create_execution", lambda *a, **k: "exec_new")
+
+    def broken_dispatch(settings, **kwargs):
+        raise RuntimeError("broker unreachable")
+
+    monkeypatch.setattr("app.api.routes.dispatch_index_task", broken_dispatch)
+    transitions = []
+    monkeypatch.setattr(
+        "app.api.routes.transition_execution",
+        lambda settings, user_id, execution_id, **kwargs: (
+            transitions.append((execution_id, kwargs)) or True
+        ),
+    )
+    statuses = []
+    monkeypatch.setattr(
+        "app.api.routes.set_document_status",
+        lambda settings, user_id, document_id, **kwargs: statuses.append((document_id, kwargs)),
+    )
+    response = client.post(
+        "/api/v1/documents",
+        files=_multipart(b"# Demo resume", "resume.md"),
+        data={"kind": "resume"},
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "TASK_DISPATCH_FAILED"
+    assert transitions[0][0] == "exec_new"
+    assert transitions[0][1]["status"] == "failed"
+    assert transitions[0][1]["error"].code == "TASK_DISPATCH_FAILED"
+    assert statuses == [("doc_new", {"status": "failed", "error": "索引任务投递失败，请重试。"})]
+
+
+def test_upload_database_failure_removes_stored_file(client, tmp_path, monkeypatch):
+    from pymongo.errors import PyMongoError
+
+    _auth_as_user_one(client)
+    monkeypatch.setattr(client.app.state.settings, "local_storage_dir", tmp_path / "storage")
+
+    def failing_create_document(*args, **kwargs):
+        raise PyMongoError("down")
+
+    monkeypatch.setattr("app.api.routes.create_document", failing_create_document)
+    response = client.post(
+        "/api/v1/documents",
+        files=_multipart(b"# Demo resume", "resume.md"),
+        data={"kind": "resume"},
+    )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "DATABASE_UNAVAILABLE"
+    assert list((tmp_path / "storage").rglob("*")) == []
+
+
+def test_evidence_requires_authentication(client):
+    assert client.get("/api/v1/evidence/chunk_1?version=1").status_code == 401
+
+
+def test_evidence_returns_quote_locator_and_source(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.chunks_get",
+        lambda settings, user_id, chunk_id, version: {
+            "id": chunk_id,
+            "document_id": "doc_x",
+            "version": version,
+            "corpus": "personal",
+            "text": "led a five-person team",
+            "locator": {"kind": "pdf", "page": 3},
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: DocumentResult(
+            id=document_id,
+            kind="resume",
+            filename="resume.pdf",
+            current_version=2,
+            status="ready",
+        ),
+    )
+    response = client.get("/api/v1/evidence/chunk_1?version=2")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data == {
+        "chunk_id": "chunk_1",
+        "document_id": "doc_x",
+        "version": 2,
+        "filename": "resume.pdf",
+        "source_type": "personal",
+        "locator": {"kind": "pdf", "page": 3},
+        "quote": "led a five-person team",
+    }
+
+
+def test_evidence_maps_text_locator_lines(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.chunks_get",
+        lambda settings, user_id, chunk_id, version: {
+            "id": chunk_id,
+            "document_id": "doc_x",
+            "version": version,
+            "corpus": "personal",
+            "text": "some lines",
+            "locator": {"kind": "text", "line_start": 10, "line_end": 18},
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: DocumentResult(
+            id=document_id,
+            kind="project",
+            filename="project.md",
+            current_version=1,
+            status="ready",
+        ),
+    )
+    response = client.get("/api/v1/evidence/chunk_t?version=1")
+    assert response.status_code == 200
+    assert response.json()["data"]["locator"] == {
+        "kind": "text",
+        "line_start": 10,
+        "line_end": 18,
+    }
+
+
+@pytest.mark.parametrize(
+    ("chunk_row", "document"),
+    [
+        (
+            None,
+            DocumentResult(
+                id="doc_x", kind="resume", filename="r.pdf", current_version=1, status="ready"
+            ),
+        ),
+        (
+            {
+                "id": "chunk_1",
+                "document_id": "doc_x",
+                "version": 1,
+                "corpus": "personal",
+                "text": "quote",
+                "locator": {"kind": "pdf", "page": 1},
+            },
+            None,
+        ),
+    ],
+)
+def test_evidence_not_found_when_chunk_or_document_missing(
+    client, monkeypatch, chunk_row, document
+):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.chunks_get",
+        lambda settings, user_id, chunk_id, version: chunk_row,
+    )
+    monkeypatch.setattr("app.api.routes.documents_get", lambda settings, user_id, doc_id: document)
+    response = client.get("/api/v1/evidence/chunk_1?version=1")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
 
 
 def test_document_queries_require_authentication(client):
@@ -145,6 +382,7 @@ def test_validation_rejects_user_override_without_echoing_input(client):
 
 
 def test_invalid_evidence_version_and_unknown_routes_have_envelopes(client):
+    _auth_as_user_one(client)
     assert (
         client.get("/api/v1/evidence/chunk_1?version=0").json()["error"]["code"] == "INVALID_INPUT"
     )
