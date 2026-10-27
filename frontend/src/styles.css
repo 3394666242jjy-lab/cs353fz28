@@ -723,6 +723,57 @@ blockquote {
     scroll-behavior: auto !important;
   }
 }
+.jd-analysis {
+  margin-top: 28px;
+  border-top: 1px solid var(--border);
+  padding-top: 22px;
+}
+.mode-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mode-switch .primary-button,
+.mode-switch .text-button {
+  min-height: 38px;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.analysis-status {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0;
+}
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.analysis-status progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+.error-box {
+  border: 1px solid #e4c3c0;
+  background: #fdf0ee;
+  border-radius: 6px;
+  padding: 12px 14px;
+  color: var(--danger);
+  font-size: 13px;
+}
+.error-box p {
+  margin-top: 4px;
+}
+.analysis-result {
+  margin-top: 30px;
+}
+.analysis-result > .section-heading {
+  margin-bottom: 4px;
+}
 .document-upload {
   margin-top: 14px;
 }
