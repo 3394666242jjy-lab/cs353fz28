@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "CareerPilot API",
-    "description": "Local M1 development. Login, /me and JD creation/query are implemented; other business routes remain stubs.",
+    "description": "Local M1 development. Login, /me, JD creation/query and document upload with indexing executions are implemented; analysis routes remain stubs.",
     "version": "0.1.0"
   },
   "paths": {
@@ -353,6 +353,11 @@
         ],
         "summary": "Upload Document",
         "operationId": "upload_document_api_v1_documents_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -406,6 +411,46 @@
           },
           "501": {
             "description": "Business module not implemented",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File exceeds the 10 MiB limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported file type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable or task dispatch failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -1068,6 +1113,11 @@
         ],
         "summary": "Get Evidence",
         "operationId": "get_evidence_api_v1_evidence__chunk_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "chunk_id",
@@ -1101,7 +1151,7 @@
             }
           },
           "404": {
-            "description": "Resource not found",
+            "description": "Evidence not found or not accessible",
             "content": {
               "application/json": {
                 "schema": {
@@ -1132,6 +1182,26 @@
           },
           "501": {
             "description": "Business module not implemented",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials or expired session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1318,7 +1388,7 @@
             "title": "Features",
             "default": {
               "authentication": true,
-              "document_upload": false,
+              "document_upload": true,
               "job_import": true,
               "rag": false,
               "agent_analysis": false
