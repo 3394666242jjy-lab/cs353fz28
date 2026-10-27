@@ -1410,8 +1410,26 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_ExecutionAccepted_"];
                 };
             };
-            /** @description Resource not found */
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Job or document not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description A referenced document is not ready */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1439,6 +1457,15 @@ export interface operations {
             };
             /** @description Business module not implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable or task dispatch failed */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1468,8 +1495,26 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_AnalysisResult_"];
                 };
             };
-            /** @description Resource not found */
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis is not in a terminal ready state */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1497,6 +1542,15 @@ export interface operations {
             };
             /** @description Business module not implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
