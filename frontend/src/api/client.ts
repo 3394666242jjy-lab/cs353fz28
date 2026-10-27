@@ -97,9 +97,10 @@ export const api = {
   },
   getDocument: (id: string, signal?: AbortSignal) =>
     request<DocumentResult>('GET', `/api/v1/documents/${encodeURIComponent(id)}`, { signal }),
-  createJob: (body: JobCreate) => request<JobCreated>('POST', '/api/v1/jobs', { body }),
-  createAnalysis: (body: AnalysisCreate) =>
-    request<ExecutionAccepted>('POST', '/api/v1/analyses', { body }),
+  createJob: (body: JobCreate, signal?: AbortSignal) =>
+    request<JobCreated>('POST', '/api/v1/jobs', { body, signal }),
+  createAnalysis: (body: AnalysisCreate, signal?: AbortSignal) =>
+    request<ExecutionAccepted>('POST', '/api/v1/analyses', { body, signal }),
   getExecution: (id: string, signal?: AbortSignal) =>
     request<ExecutionResult>('GET', `/api/v1/executions/${encodeURIComponent(id)}`, { signal }),
   getAnalysis: (id: string, signal?: AbortSignal) =>

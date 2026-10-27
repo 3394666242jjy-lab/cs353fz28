@@ -9,6 +9,30 @@ import JdImport from './pages/JdImport';
 const steps = ['资料准备', '目标岗位', '匹配分析'];
 type Connection = 'checking' | 'connected' | 'disconnected';
 
+function readReadyDocuments(): string[] {
+  try {
+    const items = JSON.parse(sessionStorage.getItem('careerpilot.pending_documents') ?? '[]');
+    return Array.isArray(items)
+      ? items
+          .filter((item) => item.status === 'ready' && typeof item.documentId === 'string')
+          .map((item) => item.documentId)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function readPendingJob(): { title: string; jd: string } | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('careerpilot.pending_analysis') ?? 'null');
+    return saved?.mode === 'real' && typeof saved.title === 'string' && typeof saved.jd === 'string'
+      ? { title: saved.title, jd: saved.jd }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [step, setStep] = useState(0);
   const [connection, setConnection] = useState<Connection>('checking');
@@ -17,9 +41,10 @@ export default function App() {
   const [probeMessage, setProbeMessage] = useState('');
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
-  const [documentIds, setDocumentIds] = useState<string[]>([]);
-  const [title, setTitle] = useState('后端开发实习生');
-  const [jd, setJd] = useState('');
+  const [hasRealAnalysis, setHasRealAnalysis] = useState(false);
+  const [documentIds, setDocumentIds] = useState<string[]>(readReadyDocuments);
+  const [title, setTitle] = useState(() => readPendingJob()?.title ?? '后端开发实习生');
+  const [jd, setJd] = useState(() => readPendingJob()?.jd ?? '');
 
   useEffect(() => {
     let active = true;
@@ -275,8 +300,6 @@ export default function App() {
                   查看样例分析 <span aria-hidden="true">→</span>
                 </button>
               </div>
-
-              <JdImport jd={jd} title={title} documentIds={documentIds} />
             </div>
           </section>
         )}
@@ -284,7 +307,7 @@ export default function App() {
         {step === 2 &&
           (analysisVisible && sampleLoaded ? (
             <AnalysisPanel />
-          ) : (
+          ) : !hasRealAnalysis ? (
             <section className="panel empty-result">
               <p className="eyebrow">03 / 匹配分析</p>
               <h2>从一份资料和一个岗位开始</h2>
@@ -293,7 +316,21 @@ export default function App() {
                 载入合成样例
               </button>
             </section>
-          ))}
+          ) : null)}
+        <div
+          className="panel"
+          hidden={step === 0 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
+        >
+          <JdImport
+            jd={jd}
+            title={title}
+            documentIds={documentIds}
+            onAnalysis={(result) => {
+              setHasRealAnalysis(result !== null);
+              if (result) setAnalysisVisible(false);
+            }}
+          />
+        </div>
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>
           <span>开发预览 / 合成数据</span>

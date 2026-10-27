@@ -39,7 +39,7 @@ interface JdImportProps {
   /** 已就绪的资料 ID；真实分析必需。 */
   documentIds?: string[];
   /** 分析成功后回调，便于父组件切换页面。 */
-  onAnalysis?: (analysis: AnalysisResult) => void;
+  onAnalysis?: (analysis: AnalysisResult | null) => void;
 }
 
 function describeLocator(locator: Evidence['locator']): string {
@@ -79,12 +79,23 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const onAnalysisRef = useRef(onAnalysis);
+  const evidenceRequestRef = useRef(0);
+  const inputRef = useRef({ jd, title, documentIds: JSON.stringify(documentIds) });
 
   const running = phase === 'creating' || phase === 'polling';
 
   useEffect(() => {
     onAnalysisRef.current = onAnalysis;
   }, [onAnalysis]);
+
+  useEffect(() => {
+    const ids = JSON.stringify(documentIds);
+    const previous = inputRef.current;
+    if (previous.jd !== jd || previous.title !== title || previous.documentIds !== ids) {
+      inputRef.current = { jd, title, documentIds: ids };
+      reset();
+    }
+  }, [jd, title, documentIds]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -99,6 +110,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     }
     return () => {
       mountedRef.current = false;
+      evidenceRequestRef.current += 1;
       stopTimers();
       abortRef.current?.abort();
     };
@@ -140,10 +152,10 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
 
   function poll(executionId: string, controller: AbortController) {
     const tick = async () => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || controller.signal.aborted) return;
       try {
         const res = await api.getExecution(executionId, controller.signal);
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || controller.signal.aborted) return;
         const exec = res.data;
         setExecution(exec);
         if (exec.status === 'succeeded') {
@@ -158,7 +170,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
           });
         }
       } catch (err) {
-        if (!mountedRef.current || isAbortError(err)) return;
+        if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
         fail(describeError(err));
       }
     };
@@ -175,7 +187,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     }
     try {
       const res = await api.getAnalysis(exec.result_id, controller.signal);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || controller.signal.aborted) return;
       sessionStorage.removeItem(STORAGE_KEY);
       setAnalysis(res.data);
       setPhase('succeeded');
@@ -183,7 +195,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
       setSelectedEvidence(null);
       onAnalysisRef.current?.(res.data);
     } catch (err) {
-      if (!mountedRef.current || isAbortError(err)) return;
+      if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
       fail(describeError(err));
     }
   }
@@ -192,6 +204,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     stopTimers();
     abortRef.current?.abort();
     abortRef.current = null;
+    evidenceRequestRef.current += 1;
     sessionStorage.removeItem(STORAGE_KEY);
     setPhase('idle');
     setExecution(null);
@@ -202,6 +215,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     setSelectedKey(null);
     setSelectedEvidence(null);
     setEvidenceLoading(null);
+    onAnalysisRef.current?.(null);
   }
 
   async function startReal() {
@@ -230,21 +244,27 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const job = await api.createJob({ title: title.trim(), raw_jd: jd });
-      const accepted = await api.createAnalysis({ job_id: job.data.job_id, document_ids: ids });
-      if (!mountedRef.current) return;
+      const job = await api.createJob({ title: title.trim(), raw_jd: jd }, controller.signal);
+      if (!mountedRef.current || controller.signal.aborted) return;
+      const accepted = await api.createAnalysis(
+        { job_id: job.data.job_id, document_ids: ids },
+        controller.signal,
+      );
+      if (!mountedRef.current || controller.signal.aborted) return;
       sessionStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
           mode: 'real',
           executionId: accepted.data.execution_id,
           startedAt: started,
+          title,
+          jd,
         }),
       );
       setPhase('polling');
       poll(accepted.data.execution_id, controller);
     } catch (err) {
-      if (!mountedRef.current || isAbortError(err)) return;
+      if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
       fail(describeError(err));
     }
   }
@@ -285,16 +305,17 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
         setExecution(done);
         setAnalysis(sampleAnalysis);
         setPhase('succeeded');
-        onAnalysisRef.current?.(sampleAnalysis);
       }, 1400);
     }, 700);
   }
 
   async function toggleEvidence(ref: EvidenceRef) {
     const key = `${ref.chunk_id}@${ref.version}`;
+    const requestId = ++evidenceRequestRef.current;
     if (selectedKey === key) {
       setSelectedKey(null);
       setSelectedEvidence(null);
+      setEvidenceLoading(null);
       return;
     }
     setSelectedKey(key);
@@ -312,13 +333,13 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
         evidence = res.data;
       }
       if (!evidence) throw new Error('没有找到对应证据。');
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || requestId !== evidenceRequestRef.current) return;
       setSelectedEvidence(evidence);
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || requestId !== evidenceRequestRef.current) return;
       setError(describeError(err));
     } finally {
-      if (mountedRef.current) setEvidenceLoading(null);
+      if (mountedRef.current && requestId === evidenceRequestRef.current) setEvidenceLoading(null);
     }
   }
 
@@ -485,8 +506,10 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
                       type="button"
                       className="text-button"
                       onClick={() => {
+                        evidenceRequestRef.current += 1;
                         setSelectedKey(null);
                         setSelectedEvidence(null);
+                        setEvidenceLoading(null);
                       }}
                     >
                       关闭
