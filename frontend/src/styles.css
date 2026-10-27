@@ -723,3 +723,61 @@ blockquote {
     scroll-behavior: auto !important;
   }
 }
+.document-upload {
+  margin-top: 14px;
+}
+.kind-picker {
+  border: 0;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+.kind-picker legend {
+  float: left;
+  padding: 0;
+  margin-right: 4px;
+}
+.kind-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.upload-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.upload-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.upload-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.upload-list .file-type {
+  font-size: 11px;
+  font-weight: 650;
+  color: #3c4e35;
+  background: #eef1e8;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.upload-name {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
