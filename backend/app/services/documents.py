@@ -190,19 +190,85 @@ def save_indexed_version(
     payload: IndexedVersionPayload,
     chunks: Iterable[IndexedChunk],
 ) -> None:
-    """Persist indexer output idempotently and only then mark the version ready.
+    """Publish a new immutable version only after all of its chunks are saved.
 
-    Re-running the same (document, version) replaces chunk rows instead of
-    duplicating them. The document switches current_version/status only after
-    the version and chunk writes succeed (dev/03 生命周期第 1 条).
+    A published version can be referenced by existing analyses and must never
+    be rebuilt in place. A failed, unpublished version may be retried.
     """
     payload = IndexedVersionPayload.model_validate(payload)
+    chunks = list(chunks)
+    if not chunks:
+        raise ValueError("Cannot publish a document version without text chunks")
     now = datetime.now(UTC)
     version = payload.version
     with database_connection(settings) as database:
         _ensure_indexes(database)
+        document = database.documents.find_one(
+            {"id": document_id, "user_id": user_id, "deleted_at": None}
+        )
+        if document is None:
+            raise ValueError("Document does not exist or is not accessible")
+        # The unique (document_id, version) index makes this an atomic claim:
+        # a published or already-writing version cannot be claimed again.
         database.document_versions.update_one(
-            {"document_id": document_id, "version": version, "user_id": user_id},
+            {
+                "document_id": document_id,
+                "version": version,
+                "user_id": user_id,
+                "status": {"$in": ["uploaded", "failed"]},
+            },
+            {
+                "$setOnInsert": {"id": f"dver_{uuid4().hex}", "created_at": now},
+                "$set": {"status": "writing", "updated_at": now},
+            },
+            upsert=True,
+        )
+        try:
+            database.chunks.delete_many(
+                {
+                    "user_id": user_id,
+                    "corpus": "personal",
+                    "document_id": document_id,
+                    "version": version,
+                }
+            )
+            database.chunks.insert_many(
+                [
+                    {
+                        "id": chunk.chunk_id,
+                        "user_id": user_id,
+                        "corpus": "personal",
+                        "document_id": document_id,
+                        "version": version,
+                        "text": chunk.text,
+                        "locator": chunk.locator.model_dump(),
+                        "vector_id": chunk.vector_id,
+                        "source_url": None,
+                        "deleted_at": None,
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                    for chunk in chunks
+                ]
+            )
+        except Exception:
+            database.document_versions.update_one(
+                {
+                    "document_id": document_id,
+                    "version": version,
+                    "user_id": user_id,
+                    "status": "writing",
+                },
+                {"$set": {"status": "failed", "updated_at": datetime.now(UTC)}},
+            )
+            raise
+        database.document_versions.update_one(
+            {
+                "document_id": document_id,
+                "version": version,
+                "user_id": user_id,
+                "status": "writing",
+            },
             {
                 "$set": {
                     "extracted_text_key": payload.extracted_text_key,
@@ -216,34 +282,6 @@ def save_indexed_version(
                     "updated_at": now,
                 }
             },
-            upsert=True,
-        )
-        database.chunks.delete_many(
-            {
-                "user_id": user_id,
-                "corpus": "personal",
-                "document_id": document_id,
-                "version": version,
-            }
-        )
-        database.chunks.insert_many(
-            [
-                {
-                    "id": chunk.chunk_id,
-                    "user_id": user_id,
-                    "corpus": "personal",
-                    "document_id": document_id,
-                    "version": version,
-                    "text": chunk.text,
-                    "locator": chunk.locator.model_dump(),
-                    "vector_id": chunk.vector_id,
-                    "source_url": None,
-                    "deleted_at": None,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-                for chunk in chunks
-            ]
         )
         database.documents.update_one(
             {"id": document_id, "user_id": user_id, "deleted_at": None},
