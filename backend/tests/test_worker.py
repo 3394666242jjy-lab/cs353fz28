@@ -365,8 +365,10 @@ def test_mongo_evidence_retriever_fills_candidates_from_chunks(monkeypatch):
     ]
 
     class Source:
+        retrieval_config_version = "retrieval-v1"
+
         async def retrieve_evidence(self, *, user_id, query, document_versions, top_k):
-            return SimpleNamespace(evidence=candidates)
+            return SimpleNamespace(evidence=candidates, retrieval_config_version="retrieval-v1")
 
     monkeypatch.setattr(
         worker,
@@ -398,3 +400,6 @@ def test_mongo_evidence_retriever_fills_candidates_from_chunks(monkeypatch):
     assert item.filename == "resume.pdf"
     assert item.source_type == "personal"
     assert item.locator.kind == "pdf" and item.locator.page == 2
+    # D's pipeline stamps retrieval_config_version from the retriever; it must
+    # be filled from member C's query result, not left empty.
+    assert retriever.retrieval_config_version == "retrieval-v1"

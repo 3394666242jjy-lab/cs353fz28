@@ -223,6 +223,9 @@ class _MongoEvidenceRetriever:
     def __init__(self, settings_obj: Any, source: Any) -> None:
         self._settings = settings_obj
         self._source = source
+        # D's pipeline stamps this onto the AnalysisResult; fill it from
+        # member C's query result instead of inventing a version.
+        self.retrieval_config_version: str | None = None
 
     async def retrieve_evidence(
         self,
@@ -238,6 +241,9 @@ class _MongoEvidenceRetriever:
             document_versions=document_versions,
             top_k=top_k,
         )
+        config_version = getattr(result, "retrieval_config_version", None)
+        if isinstance(config_version, str) and config_version.strip():
+            self.retrieval_config_version = config_version
         candidates = result.evidence
         rows = {
             row["id"]: row
