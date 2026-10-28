@@ -1,10 +1,10 @@
 # CareerPilot API 接口文档
 
-状态：v0.3 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；B 已实现本地 POST /auth/login、GET /me、POST /jobs 和 GET /jobs/{id}，其余有效业务请求仍返回 501 NOT_IMPLEMENTED。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
+状态：v0.4 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；本地登录、本人资料、岗位创建查询、文档与任务状态查询已接入数据层。上传、分析和证据接口仍待后续分支接入。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。SSE 及人工恢复为 M2。
 
 ## M1 必要接口与响应字段
 
-完整产品接口保留在下文；M1 仅实现以下子集。文件仅支持 UTF-8 Markdown/TXT，PDF 在 M2；身份使用本地种子账号，不要求首轮开放注册。认证、用户隔离和标准错误格式仍生效。
+完整产品接口保留在下文；M1 实现以下子集。文件支持有文本层 PDF 和 UTF-8 Markdown/TXT，PDF 在 Python 后端逐页解析；身份使用本地种子账号，不要求首轮开放注册。认证、用户隔离和标准错误格式仍生效。
 
 | 方法与路径 | 本轮请求 | 本轮响应约定（均使用统一 envelope） |
 | --- | --- | --- |
@@ -59,6 +59,10 @@ M1 用轮询查询 executions，终态停止；缺少证据时直接返回分析
 | DELETE /documents/{id} | 无 | 202：status=deleted, purge_status=pending；立即阻断后续访问 |
 
 文件仅支持有文本层 PDF 和 UTF-8 TXT/Markdown，最大 10 MiB；413 为过大，415 为不支持，422 为无法解析。删除和版本更新后，相关分析应显示 stale 或来源不可用。
+
+上述格式支持属于 M1 必做范围。413/415/422 适用于上传阶段已能判定的错误；POST /documents 返回 202 后，Worker 发现损坏、需要密码、无可提取文本或无法提取的扫描内容时，文档和执行均转为 failed，并通过 GET /documents/{id} 的 error 与 GET /executions/{id} 的 error 返回脱敏原因。不能将解析失败报告为 ready/succeeded，不能以空索引替代失败。
+
+M1 沿用现有 Evidence.locator 联合类型：PDF 为 {"kind":"pdf","page":2}，页码从 1 开始且对应上传原文件；Markdown/TXT 为 {"kind":"text","line_start":15,"line_end":16}。PDF 单个 chunk 不跨页，quote 来自对应页的实际提取文本，A 通过已鉴权证据接口展示片段与页码；不需要为页码新增一套字段，也不公开本地文件路径。此轮不要求浏览器内嵌完整 PDF 阅读器。
 
 ## 岗位与分析
 
