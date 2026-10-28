@@ -4,7 +4,14 @@
 
 ## M1 数据范围
 
-首轮只需要 users、documents、document_versions、chunks、jobs、analyses 和 executions。users 由本地种子脚本初始化，所有私有集合验证 user_id。文件 storage_key/extracted_text_key 先指向本地私有适配器，不改变未来迁移 OSS 的逻辑字段。
+首轮业务集合为 users、documents、document_versions、chunks、jobs、analyses 和 executions。B 的本地登录实现额外使用 auth_sessions 保存可过期的登录会话，此实现细化随 PR 交负责人评审。users 由本地种子脚本初始化，所有私有集合验证 user_id。文件 storage_key/extracted_text_key 先指向本地私有适配器，不改变未来迁移 OSS 的逻辑字段。
+
+### B 的本地认证实现
+
+- users.password_hash 使用带随机盐的 scrypt-v1；用户 id、规范化 email 分别有唯一索引。种子工具只在 local/test 运行，重复初始化不更新已有账号或密码。
+- auth_sessions 使用令牌的 SHA-256 摘要作为 `_id`，保存 user_id、created_at、expires_at；不保存原始令牌。expires_at 建 TTL 索引，user_id 建普通索引。
+- 令牌由安全随机源生成，默认有效期 3600 秒；每次鉴权显式检查 expires_at，即使 TTL 清理尚未发生，过期会话也不能使用。用户已不存在时拒绝会话。
+- 以上为本地 M1 实现；公开注册、注销/撤销接口、登录限流和生产身份策略尚未交付，不作为云端认证完成。
 
 - 固定版本 1：保留 version/current_version、来源位置及 content_hash，M1 不实现资料编辑和完整删除界面。
 - PDF 与文本均属 M1：documents 保存实际 media_type/size_bytes 与原始私有文件；document_versions 的 extracted_text_key 指向版本化提取结果。PDF 提取结果逐页保存原始页码与文本，chunks.locator 使用 {kind: pdf, page: 1 起始页码}，chunk 不跨页；Markdown/TXT 使用 {kind: text, line_start, line_end}。解析器版本随文档版本保存，空白页不重排页码，解析失败不写成 ready。

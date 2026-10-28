@@ -1,6 +1,6 @@
 # CareerPilot API 接口文档
 
-状态：v0.4 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；有效业务请求统一返回 501 NOT_IMPLEMENTED，业务实现待完成。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。B 维护业务 API；A 使用样例开发；C/D 维护检索和 Agent 内部契约。SSE 及人工恢复为 M2。
+状态：v0.4 契约候选版。M1 路由、Pydantic 模型与 OpenAPI 已建立；本地登录、本人资料、岗位创建查询、文档与任务状态查询已接入数据层。上传、分析和证据接口仍待后续分支接入。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)。SSE 及人工恢复为 M2。
 
 ## M1 必要接口与响应字段
 
@@ -41,7 +41,11 @@ M1 用轮询查询 executions，终态停止；缺少证据时直接返回分析
 | POST /auth/login | email, password | 200：access_token, token_type, expires_in |
 | GET /me | 无 | 200：用户资料，不含密码哈希 |
 
-密码策略、令牌有效期和限流参数在实现前由 B 与负责人确认；登出至少清理客户端令牌，服务端撤销方案在身份模块 Issue 中确定。
+当前本地实现：种子密码为 12–1024 字符，原样核对，不裁剪密码空白；邮箱去首尾空白并转小写。令牌为不透明 Bearer 字符串，默认 3600 秒过期，由 ACCESS_TOKEN_TTL_SECONDS 配置（60–86400 秒）。后端只保存令牌摘要；客户端不要解析或将其放入 URL。
+
+错误邮箱、错误密码、缺失/无效/过期令牌统一返回 401 UNAUTHORIZED 和 WWW-Authenticate: Bearer；数据库不可用返回脱敏的 503 DATABASE_UNAVAILABLE。成功响应沿用既有 Envelope、TokenResult、UserResult。Swagger 文档可通过 Authorize 输入原始令牌测试 GET /me。
+
+本地密码及会话策略随 B 的 PR 交负责人确认；公开注册、登出撤销、登录限流和生产身份策略尚未实现。当前不得将登录模块视为生产发布完成。
 
 ## 个人资料
 
@@ -61,6 +65,8 @@ M1 用轮询查询 executions，终态停止；缺少证据时直接返回分析
 M1 沿用现有 Evidence.locator 联合类型：PDF 为 {"kind":"pdf","page":2}，页码从 1 开始且对应上传原文件；Markdown/TXT 为 {"kind":"text","line_start":15,"line_end":16}。PDF 单个 chunk 不跨页，quote 来自对应页的实际提取文本，A 通过已鉴权证据接口展示片段与页码；不需要为页码新增一套字段，也不公开本地文件路径。此轮不要求浏览器内嵌完整 PDF 阅读器。
 
 ## 岗位与分析
+
+当前 JD 实现：创建与查询都要求有效 Bearer 令牌；user_id 只从服务端鉴权结果取得，客户端额外提交 user_id 返回 422。POST /jobs 返回 201 和随机 job_id、version=1；保存 title、company、未经裁剪的 raw_jd、空 requirements 与 UTC 时间。不接受纯空白 JD。GET /jobs/{id} 按 id 和 user_id 联合查询，本人记录返回 200，其他用户的记录与不存在的记录统一返回 404 RESOURCE_NOT_FOUND。数据库故障返回脱敏的 503。当前未实现岗位列表、编辑、删除或 JD 自动拆解。
 
 | 方法与路径 | 请求 | 响应 |
 | --- | --- | --- |

@@ -34,6 +34,12 @@ jobs:
         run: |
           docker compose up -d
           uv run --project backend python scripts/check_infra.py --attempts 20
+      - name: Verify authentication and JD persistence against real MongoDB
+        working-directory: backend
+        env:
+          RUN_MONGO_AUTH_TESTS: "1"
+          RUN_MONGO_JOB_TESTS: "1"
+        run: uv run pytest tests/test_auth_integration.py tests/test_jobs_integration.py -q
       - name: Stop CI infrastructure
         if: always()
         run: docker compose down --volumes

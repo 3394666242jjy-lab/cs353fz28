@@ -1,21 +1,15 @@
 import asyncio
 
 import httpx
-from pymongo import MongoClient
 from redis.asyncio import Redis
 
 from app.config import Settings
+from app.services.database import database_connection
 
 
 def _ping_mongo(settings: Settings) -> bool:
-    timeout_ms = int(settings.dependency_timeout_seconds * 1000)
-    with MongoClient(
-        settings.mongodb_uri.get_secret_value(),
-        serverSelectionTimeoutMS=timeout_ms,
-        connectTimeoutMS=timeout_ms,
-        socketTimeoutMS=timeout_ms,
-    ) as client:
-        return bool(client.admin.command("ping")["ok"])
+    with database_connection(settings) as database:
+        return bool(database.command("ping")["ok"])
 
 
 async def _ping_redis(settings: Settings) -> bool:

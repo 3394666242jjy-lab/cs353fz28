@@ -19,9 +19,9 @@ class Capabilities(ContractModel):
     mode: Literal["scaffold"] = "scaffold"
     version: str = "0.1.0"
     features: dict[str, bool] = {
-        "authentication": False,
+        "authentication": True,
         "document_upload": False,
-        "job_import": False,
+        "job_import": True,
         "rag": False,
         "agent_analysis": False,
     }
