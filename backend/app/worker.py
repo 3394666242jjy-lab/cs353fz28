@@ -8,6 +8,7 @@ dependency must fail the execution with the reason, never hang or fake success.
 
 import asyncio
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 from celery import Celery
@@ -47,7 +48,7 @@ def _load_indexer() -> Any:
     return index_document
 
 
-def _extract_text(raw: bytes) -> str:
+def _extract_text(raw: bytes, file_type: str) -> str:
     """Extract plain text via member C's parser when available.
 
     TXT/Markdown uploads are already plain text, so the raw bytes are a valid
@@ -56,8 +57,10 @@ def _extract_text(raw: bytes) -> str:
     try:
         from app.rag.chunking import parse_document
     except ImportError:
-        return raw.decode("utf-8", errors="replace")
-    return "\n".join(parse_document(raw).lines)
+        if file_type == ".pdf":
+            raise RuntimeError("PDF 解析模块尚未集成") from None
+        return raw.decode("utf-8")
+    return parse_document(raw, file_type=file_type).text
 
 
 def _fail(
@@ -78,18 +81,7 @@ def _fail(
         status="failed",
         error=ExecutionError(code=code, message=message),
     )
-    if not transitioned and state_version == 1:
-        # Restart residue or a racing transition: still try to fail version 2
-        # so a running task does not dangle after its worker died.
-        transition_execution(
-            settings_obj,
-            user_id,
-            execution_id,
-            expected_state_version=2,
-            status="failed",
-            error=ExecutionError(code=code, message=message),
-        )
-    if document_id is not None:
+    if transitioned and document_id is not None:
         set_document_status(settings_obj, user_id, document_id, status="failed", error=message)
 
 
@@ -110,7 +102,19 @@ def run_indexing(
     execution_id: str,
 ) -> None:
     """Synchronous core of the indexing task, separated for direct testing."""
-    raw = read_upload(settings_obj, storage_key)
+    try:
+        raw = read_upload(settings_obj, storage_key)
+    except OSError:
+        _fail(
+            settings_obj,
+            user_id,
+            execution_id,
+            1,
+            "FILE_READ_FAILED",
+            "无法读取上传文件。",
+            document_id,
+        )
+        return
     if raw is None:
         _fail(
             settings_obj,
@@ -125,15 +129,6 @@ def run_indexing(
     if not transition_execution(
         settings_obj, user_id, execution_id, expected_state_version=1, status="running"
     ):
-        _fail(
-            settings_obj,
-            user_id,
-            execution_id,
-            2,
-            "STALE_EXECUTION",
-            "任务状态已变化，放弃本次执行。",
-            document_id,
-        )
         return
     try:
         index_document = _load_indexer()
@@ -143,11 +138,16 @@ def run_indexing(
                 user_id=user_id,
                 document_id=document_id,
                 version=version,
+                file_type=Path(storage_key).suffix.lower(),
                 settings=settings_obj,
             )
         )
         extracted_text_key = save_extracted_text(
-            settings_obj, user_id, document_id, version, _extract_text(raw)
+            settings_obj,
+            user_id,
+            document_id,
+            version,
+            _extract_text(raw, Path(storage_key).suffix.lower()),
         )
         save_indexed_version(
             settings_obj,

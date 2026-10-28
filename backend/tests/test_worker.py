@@ -172,7 +172,6 @@ def test_run_indexing_stale_execution_never_indexes(settings, tmp_path, monkeypa
     worker.run_indexing(settings, storage_key, "user_one", "doc_x", 1, "exec_1")
 
     assert loaded["called"] is False
-    assert len(calls["transitions"]) == 2
+    assert len(calls["transitions"]) == 1
     assert calls["transitions"][0][1]["status"] == "running"
-    assert calls["transitions"][1][1]["status"] == "failed"
-    assert calls["transitions"][1][1]["error"].code == "STALE_EXECUTION"
+    assert calls["statuses"] == []

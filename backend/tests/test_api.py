@@ -216,6 +216,48 @@ def test_upload_database_failure_removes_stored_file(client, tmp_path, monkeypat
     assert list((tmp_path / "storage").rglob("*")) == []
 
 
+def test_upload_execution_creation_failure_marks_document_failed(client, tmp_path, monkeypatch):
+    from pymongo.errors import PyMongoError
+
+    _auth_as_user_one(client)
+    monkeypatch.setattr(client.app.state.settings, "local_storage_dir", tmp_path / "storage")
+    monkeypatch.setattr("app.api.routes.create_document", lambda *a, **k: "doc_new")
+
+    def fail(*args, **kwargs):
+        raise PyMongoError("down")
+
+    monkeypatch.setattr("app.api.routes.create_execution", fail)
+    statuses = []
+    monkeypatch.setattr(
+        "app.api.routes.set_document_status", lambda *a, **kw: statuses.append(kw) or True
+    )
+    response = client.post(
+        "/api/v1/documents", files=_multipart(b"resume"), data={"kind": "resume"}
+    )
+    assert response.status_code == 503
+    assert statuses[0]["status"] == "failed"
+    assert list((tmp_path / "storage").rglob("*")) == []
+
+
+def test_upload_preserves_file_when_database_cannot_mark_failed(client, tmp_path, monkeypatch):
+    from pymongo.errors import PyMongoError
+
+    _auth_as_user_one(client)
+    monkeypatch.setattr(client.app.state.settings, "local_storage_dir", tmp_path / "storage")
+    monkeypatch.setattr("app.api.routes.create_document", lambda *a, **k: "doc_new")
+
+    def fail(*args, **kwargs):
+        raise PyMongoError("down")
+
+    monkeypatch.setattr("app.api.routes.create_execution", fail)
+    monkeypatch.setattr("app.api.routes.set_document_status", fail)
+    response = client.post(
+        "/api/v1/documents", files=_multipart(b"resume"), data={"kind": "resume"}
+    )
+    assert response.status_code == 503
+    assert [p.read_bytes() for p in (tmp_path / "storage").rglob("*") if p.is_file()] == [b"resume"]
+
+
 def test_evidence_requires_authentication(client):
     assert client.get("/api/v1/evidence/chunk_1?version=1").status_code == 401
 
