@@ -47,6 +47,12 @@ def _record_calls(monkeypatch):
     """Patch worker-level service boundaries with recording fakes."""
     calls = {"transitions": [], "statuses": [], "saved_versions": []}
 
+    class FakeStore:
+        async def ensure_collection(self):
+            pass
+
+    monkeypatch.setattr(worker, "_load_vector_store", lambda: lambda settings: FakeStore())
+
     def fake_transition(settings_obj, user_id, execution_id, **kwargs):
         calls["transitions"].append((execution_id, kwargs))
         return True
