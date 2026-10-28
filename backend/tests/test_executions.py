@@ -75,6 +75,7 @@ def test_transition_requires_matching_state_version(settings, database):
     query = database.executions.update_one.call_args.args[0]
     assert query["state_version"] == 1
     assert query["user_id"] == "user_one"
+    assert query["status"] == {"$in": ["queued"]}
     update = database.executions.update_one.call_args.args[1]
     assert update["$inc"] == {"state_version": 1}
     assert update["$set"]["status"] == "running"
@@ -92,6 +93,7 @@ def test_transition_bumps_state_version_on_success(settings, database):
         result_id="doc_x",
     )
     assert moved is True
+    assert database.executions.update_one.call_args.args[0]["status"] == {"$in": ["running"]}
 
 
 def test_transition_rejects_succeeded_without_result(settings, database):

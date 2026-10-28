@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
+from pymongo.errors import ConnectionFailure, DuplicateKeyError
 
 from app.config import Settings
 from app.schemas.resources import DocumentResult
@@ -28,7 +29,10 @@ def settings():
 def database(monkeypatch):
     connection = MagicMock()
     monkeypatch.setattr("app.services.documents.database_connection", connection)
-    return connection.return_value.__enter__.return_value
+    db = connection.return_value.__enter__.return_value
+    db.document_versions.update_one.return_value.matched_count = 1
+    db.documents.update_one.return_value.matched_count = 1
+    return db
 
 
 def _chunk(chunk_id: str, page: int) -> SimpleNamespace:
@@ -177,6 +181,42 @@ def test_get_chunk_scopes_by_owner_and_version(settings, database):
     assert row == {"id": "chunk_1"}
     query = database.chunks.find_one.call_args.args[0]
     assert query == {"id": "chunk_1", "user_id": "user_one", "version": 2, "deleted_at": None}
+
+
+def test_failed_chunk_write_never_publishes_version(settings, database):
+    database.chunks.insert_many.side_effect = ConnectionFailure("write failed")
+    with pytest.raises(ConnectionFailure):
+        save_indexed_version(settings, "user_one", "doc_x", PAYLOAD, [_chunk("c1", 1)])
+    assert database.document_versions.update_one.call_args.args[1]["$set"]["status"] == "failed"
+    database.documents.update_one.assert_not_called()
+    claim = database.document_versions.update_one.call_args_list[0].args[1]
+    assert claim["$setOnInsert"]["id"].startswith("dver_")
+    assert "created_at" in claim["$setOnInsert"]
+
+
+def test_published_version_cannot_be_replaced(settings, database):
+    database.document_versions.update_one.side_effect = DuplicateKeyError("already published")
+    with pytest.raises(DuplicateKeyError):
+        save_indexed_version(settings, "user_one", "doc_x", PAYLOAD, [_chunk("c1", 1)])
+    database.chunks.delete_many.assert_not_called()
+    database.documents.update_one.assert_not_called()
+
+
+def test_version_is_not_published_if_write_claim_is_lost(settings, database):
+    database.document_versions.update_one.side_effect = [
+        SimpleNamespace(matched_count=1),
+        SimpleNamespace(matched_count=0),
+    ]
+    with pytest.raises(RuntimeError, match="changed while"):
+        save_indexed_version(settings, "user_one", "doc_x", PAYLOAD, [_chunk("c1", 1)])
+    database.documents.update_one.assert_not_called()
+
+
+def test_empty_chunks_are_rejected_before_writes(settings, database):
+    with pytest.raises(ValueError, match="without text chunks"):
+        save_indexed_version(settings, "user_one", "doc_x", PAYLOAD, [])
+    database.document_versions.update_one.assert_not_called()
+    database.chunks.delete_many.assert_not_called()
 
 
 def test_list_chunks_by_ids_owner_scoped(settings, database):

@@ -117,6 +117,13 @@ def transition_execution(
                 "id": execution_id,
                 "user_id": user_id,
                 "state_version": expected_state_version,
+                "status": {
+                    "$in": ["queued"]
+                    if status == "running"
+                    else ["running"]
+                    if status == "succeeded"
+                    else ["queued", "running"]
+                },
             },
             {"$set": update, "$inc": {"state_version": 1}},
         )
