@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Literal, NoReturn
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import TypeAdapter
@@ -7,7 +7,14 @@ from pymongo.errors import PyMongoError
 
 from app.api.dependencies import current_user, database_unavailable, request_settings, unauthorized
 from app.config import Settings
-from app.schemas.analysis import AnalysisCreate, AnalysisResult, Evidence, PdfLocator, TextLocator
+from app.schemas.analysis import (
+    AnalysisCreate,
+    AnalysisResult,
+    DocumentVersion,
+    Evidence,
+    PdfLocator,
+    TextLocator,
+)
 from app.schemas.common import Envelope, ErrorEnvelope
 from app.schemas.resources import (
     DocumentAccepted,
@@ -23,6 +30,9 @@ from app.schemas.resources import (
     TokenResult,
     UserResult,
 )
+from app.services.analyses import STATUS_FAILED, STATUS_READY, set_analysis_failed
+from app.services.analyses import create_analysis as analyses_create
+from app.services.analyses import get_analysis as analyses_get
 from app.services.auth import login_user
 from app.services.documents import create_document, set_document_status
 from app.services.documents import get_chunk as chunks_get
@@ -32,7 +42,7 @@ from app.services.executions import ExecutionCreate, create_execution, transitio
 from app.services.executions import get_execution as executions_get
 from app.services.jobs import load_job, save_job
 from app.services.storage import remove_upload, save_upload
-from app.services.tasks import dispatch_index_task
+from app.services.tasks import dispatch_analysis_task, dispatch_index_task
 
 router = APIRouter(
     prefix="/api/v1",
@@ -46,13 +56,6 @@ UPLOAD_MEDIA_TYPES = {
     ".md": "text/markdown",
 }
 LocatorAdapter: TypeAdapter[TextLocator | PdfLocator] = TypeAdapter(TextLocator | PdfLocator)
-
-
-def not_implemented(owner: str) -> NoReturn:
-    raise HTTPException(
-        status_code=501,
-        detail={"code": "NOT_IMPLEMENTED", "message": f"骨架接口，业务待 {owner} 实现。"},
-    )
 
 
 AUTH_ERRORS = {
@@ -157,8 +160,6 @@ async def upload_document(
                 ):
                     remove_upload(settings, storage_key)
             except PyMongoError:
-                # Preserve the file if the database is unavailable and the
-                # document cannot yet be marked failed.
                 pass
         raise database_unavailable() from exc
     try:
@@ -281,16 +282,184 @@ def get_job(
     return Envelope(data=result, request_id=request.state.request_id)
 
 
+ANALYSIS_WRITE_ERRORS = {
+    401: {"model": ErrorEnvelope, "description": "Invalid or missing bearer token"},
+    404: {"model": ErrorEnvelope, "description": "Job or document not found"},
+    409: {"model": ErrorEnvelope, "description": "A referenced document is not ready"},
+    503: {"model": ErrorEnvelope, "description": "Database unavailable or task dispatch failed"},
+}
+
+ANALYSIS_READ_ERRORS = {
+    401: {"model": ErrorEnvelope, "description": "Invalid or missing bearer token"},
+    404: {"model": ErrorEnvelope, "description": "Analysis not found"},
+    409: {"model": ErrorEnvelope, "description": "Analysis is not in a terminal ready state"},
+    503: {"model": ErrorEnvelope, "description": "Database unavailable"},
+}
+
+
 @router.post(
-    "/analyses", response_model=Envelope[ExecutionAccepted], status_code=202, tags=["analysis"]
+    "/analyses",
+    response_model=Envelope[ExecutionAccepted],
+    status_code=202,
+    tags=["analysis"],
+    responses=ANALYSIS_WRITE_ERRORS,
 )
-async def create_analysis(payload: AnalysisCreate):
-    not_implemented("B/D（#7、#9）")
+def create_analysis(
+    payload: AnalysisCreate,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    try:
+        job = load_job(settings, user.id, payload.job_id)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "RESOURCE_NOT_FOUND", "message": "岗位不存在。"},
+        )
+    analysis_id = None
+    try:
+        document_versions: list[DocumentVersion] = []
+        for document_id in payload.document_ids:
+            document = documents_get(settings, user.id, document_id)
+            if document is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "NOT_FOUND", "message": "资料不存在或不属于当前用户。"},
+                )
+            if document.status != "ready":
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "DOCUMENT_NOT_READY",
+                        "message": f"资料 {document_id} 尚未索引完成，请稍后重试。",
+                    },
+                )
+            document_versions.append(
+                DocumentVersion(document_id=document.id, version=document.current_version)
+            )
+        analysis_id = analyses_create(
+            settings,
+            user.id,
+            job_id=job.id,
+            job_version=job.version,
+            job_snapshot=job,
+            document_versions=document_versions,
+        )
+        execution_id = create_execution(
+            settings, user.id, ExecutionCreate(type="analysis", resource_id=analysis_id)
+        )
+    except PyMongoError as exc:
+        if analysis_id is not None:
+            try:
+                set_analysis_failed(
+                    settings, user.id, analysis_id, error="创建分析任务失败，请重试。"
+                )
+            except PyMongoError:
+                pass
+        raise database_unavailable() from exc
+    try:
+        dispatch_analysis_task(
+            settings, analysis_id=analysis_id, user_id=user.id, execution_id=execution_id
+        )
+    except Exception as exc:
+        # dev/08: a dispatch failure must fail the execution explicitly.
+        transition_execution(
+            settings,
+            user.id,
+            execution_id,
+            expected_state_version=1,
+            status="failed",
+            error=ExecutionError(code="TASK_DISPATCH_FAILED", message="分析任务投递失败，请重试。"),
+        )
+        set_analysis_failed(settings, user.id, analysis_id, error="分析任务投递失败，请重试。")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "TASK_DISPATCH_FAILED", "message": "分析任务投递失败，请重试。"},
+        ) from exc
+    return Envelope(
+        data=ExecutionAccepted(execution_id=execution_id),
+        request_id=request.state.request_id,
+    )
 
 
-@router.get("/analyses/{analysis_id}", response_model=Envelope[AnalysisResult], tags=["analysis"])
-async def get_analysis(analysis_id: str):
-    not_implemented("B/D（#7、#9）")
+def _analysis_is_stale(settings: Settings, user_id: str, row: dict) -> bool:
+    """Compare the pinned versions against current job and document state."""
+    job = load_job(settings, user_id, row["job_id"])
+    if job is None or job.version != row["job_version"]:
+        return True
+    for item in row["document_versions"]:
+        document = documents_get(settings, user_id, item["document_id"])
+        if document is None or document.status == "deleted":
+            return True
+        if document.current_version != item["version"]:
+            return True
+    return False
+
+
+@router.get(
+    "/analyses/{analysis_id}",
+    response_model=Envelope[AnalysisResult],
+    tags=["analysis"],
+    responses=ANALYSIS_READ_ERRORS,
+)
+def get_analysis(
+    analysis_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    try:
+        row = analyses_get(settings, user.id, analysis_id)
+        if row is not None and row["status"] == STATUS_READY:
+            stale = _analysis_is_stale(settings, user.id, row)
+        else:
+            stale = False
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "分析不存在或不属于当前用户。"},
+        )
+    if row["status"] == STATUS_FAILED:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ANALYSIS_FAILED",
+                "message": row.get("error") or "分析执行失败。",
+            },
+        )
+    if row["status"] != STATUS_READY:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ANALYSIS_NOT_READY",
+                "message": "分析仍在进行中，请轮询执行状态。",
+            },
+        )
+    try:
+        result = AnalysisResult(
+            id=row["id"],
+            job_id=row["job_id"],
+            job_version=row["job_version"],
+            document_versions=row["document_versions"],
+            stale=stale,
+            matches=row["matches"],
+            warnings=row["warnings"],
+            trace_id=row.get("trace_id"),
+            prompt_version=row.get("prompt_version"),
+            retrieval_config_version=row.get("retrieval_config_version"),
+            model_version=row.get("model_version"),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "INTERNAL_ERROR", "message": "分析记录格式异常，请通过请求 ID 排查。"},
+        ) from exc
+    return Envelope(data=result, request_id=request.state.request_id)
 
 
 @router.get(

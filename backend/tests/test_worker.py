@@ -5,13 +5,14 @@ execution explicitly when a dependency is missing or the pipeline errors, and
 must never leave the execution queued forever.
 """
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from app import worker
 from app.config import Settings
-from app.schemas.analysis import TextLocator
+from app.schemas.analysis import DocumentVersion, TextLocator
 from app.services.storage import read_upload, save_upload
 
 INDEXED = SimpleNamespace(
@@ -45,19 +46,18 @@ def _successful_indexer():
 
 def _record_calls(monkeypatch):
     """Patch worker-level service boundaries with recording fakes."""
-    calls = {"transitions": [], "statuses": [], "saved_versions": []}
+    calls = {"transitions": [], "statuses": [], "saved_versions": [], "ensured": False}
 
     class FakeStore:
         async def ensure_collection(self):
-            pass
-
-    monkeypatch.setattr(worker, "_load_vector_store", lambda: lambda settings: FakeStore())
+            calls["ensured"] = True
 
     def fake_transition(settings_obj, user_id, execution_id, **kwargs):
         calls["transitions"].append((execution_id, kwargs))
         return True
 
     monkeypatch.setattr(worker, "transition_execution", fake_transition)
+    monkeypatch.setattr(worker, "_load_vector_store", lambda *a, **k: lambda s: FakeStore())
     monkeypatch.setattr(
         worker,
         "set_document_status",
@@ -93,6 +93,9 @@ def test_run_indexing_success_persists_version_and_chunks(settings, tmp_path, mo
     assert payload.parser_version == "parser-1"
     assert payload.index_version == "index-1"
     assert [chunk.chunk_id for chunk in chunks] == ["chunk_1"]
+    # B's orchestration must ensure the vector collection exists before C's
+    # pipeline writes points (C's adapter signals "call ensure_collection").
+    assert calls["ensured"] is True
     # save_indexed_version owns the ready transition; the worker must not also
     # flip the document, and it stores real extracted text for the version key.
     assert calls["statuses"] == []
@@ -181,3 +184,337 @@ def test_run_indexing_stale_execution_never_indexes(settings, tmp_path, monkeypa
     assert len(calls["transitions"]) == 1
     assert calls["transitions"][0][1]["status"] == "running"
     assert calls["statuses"] == []
+
+
+# --- analysis task (member D's agent via lazy import) ---
+
+ANALYSIS_RESULT = SimpleNamespace(
+    id="analysis_1",
+    job_id="job_1",
+    job_version=1,
+    document_versions=[DocumentVersion(document_id="doc_x", version=1)],
+    stale=False,
+    matches=[],
+    warnings=[],
+    trace_id="trace_1",
+    prompt_version=None,
+    retrieval_config_version=None,
+    model_version=None,
+)
+
+ANALYSIS_ROW = {
+    "id": "analysis_1",
+    "job_id": "job_1",
+    "job_version": 1,
+    "document_versions": [{"document_id": "doc_x", "version": 1}],
+    "status": "pending",
+}
+
+
+def _job():
+    return SimpleNamespace(id="job_1", title="Demo", raw_jd="JD", version=1)
+
+
+def _fake_agent():
+    class Agent:
+        async def run_analysis(self, *, user_id, job, document_versions, retriever):
+            return ANALYSIS_RESULT
+
+    return Agent()
+
+
+_MISSING = object()
+
+
+def _analysis_calls(monkeypatch, row=ANALYSIS_ROW, job=_MISSING):
+    calls = {"transitions": [], "failures": [], "saved": []}
+    if job is _MISSING:
+        job = _job()
+    monkeypatch.setattr(worker, "get_analysis", lambda settings, user_id, aid: row)
+    monkeypatch.setattr(worker, "load_job", lambda settings, user_id, job_id: job)
+    monkeypatch.setattr(worker, "_build_retriever", lambda settings: object())
+
+    def fake_transition(settings_obj, user_id, execution_id, **kwargs):
+        calls["transitions"].append((execution_id, kwargs))
+        return True
+
+    monkeypatch.setattr(worker, "transition_execution", fake_transition)
+    monkeypatch.setattr(
+        worker,
+        "set_analysis_failed",
+        lambda settings_obj, user_id, aid, **kwargs: calls["failures"].append((aid, kwargs)),
+    )
+    monkeypatch.setattr(
+        worker,
+        "save_analysis_result",
+        lambda settings_obj, user_id, aid, result: calls["saved"].append((aid, result)) or True,
+    )
+    return calls
+
+
+def test_run_analysis_success_saves_result_and_succeeds(monkeypatch):
+    calls = _analysis_calls(monkeypatch)
+    monkeypatch.setattr(worker, "_load_agent", _fake_agent)
+
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+
+    assert [kwargs["status"] for _, kwargs in calls["transitions"]] == ["running", "succeeded"]
+    succeeded = calls["transitions"][1][1]
+    assert succeeded["result_type"] == "analysis"
+    assert succeeded["result_id"] == "analysis_1"
+    assert calls["saved"] == [("analysis_1", ANALYSIS_RESULT)]
+    assert calls["failures"] == []
+
+
+def test_run_analysis_missing_record_fails_without_touching_agent(monkeypatch):
+    calls = _analysis_calls(monkeypatch, row=None)
+    loaded = {"called": False}
+    monkeypatch.setattr(worker, "_load_agent", lambda: loaded.__setitem__("called", True))
+
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+
+    assert loaded["called"] is False
+    assert [kwargs["status"] for _, kwargs in calls["transitions"]] == ["running", "failed"]
+    assert calls["transitions"][1][1]["error"].code == "ANALYSIS_MISSING"
+    assert calls["failures"] == []
+
+
+def test_run_analysis_missing_job_marks_record_failed(monkeypatch):
+    calls = _analysis_calls(monkeypatch, job=None)
+    monkeypatch.setattr(worker, "_load_agent", _fake_agent)
+
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+
+    assert calls["transitions"][1][1]["error"].code == "JOB_MISSING"
+    assert calls["failures"] == [("analysis_1", {"error": "岗位不存在，无法执行分析。"})]
+
+
+def test_run_analysis_agent_error_fails_execution_and_record(monkeypatch):
+    calls = _analysis_calls(monkeypatch)
+
+    def raising_agent():
+        raise RuntimeError("LLM provider unreachable")
+
+    monkeypatch.setattr(worker, "_load_agent", raising_agent)
+
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+
+    assert [kwargs["status"] for _, kwargs in calls["transitions"]] == ["running", "failed"]
+    error = calls["transitions"][1][1]["error"]
+    assert error.code == "ANALYSIS_FAILED"
+    assert "LLM provider unreachable" in error.message
+    assert calls["failures"][0][1]["error"] == error.message
+
+
+def test_run_analysis_fails_explicitly_when_agent_module_missing(monkeypatch):
+    calls = _analysis_calls(monkeypatch)
+
+    def missing_agent():
+        raise RuntimeError("分析 Agent 模块（app.agent，成员 D）尚未集成")
+
+    monkeypatch.setattr(worker, "_load_agent", missing_agent)
+
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+
+    error = calls["transitions"][1][1]["error"]
+    assert error.code == "ANALYSIS_FAILED"
+    assert "尚未集成" in error.message
+
+
+def test_run_analysis_stale_execution_never_loads_agent(monkeypatch):
+    calls = {"transitions": []}
+    monkeypatch.setattr(worker, "get_analysis", lambda settings, user_id, aid: ANALYSIS_ROW)
+    monkeypatch.setattr(worker, "load_job", lambda settings, user_id, job_id: _job())
+
+    def stale_transition(settings_obj, user_id, execution_id, **kwargs):
+        calls["transitions"].append((execution_id, kwargs))
+        return False
+
+    monkeypatch.setattr(worker, "transition_execution", stale_transition)
+    loaded = {"called": False}
+    monkeypatch.setattr(worker, "_load_agent", lambda: loaded.__setitem__("called", True))
+
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+
+    assert loaded["called"] is False
+    assert calls["transitions"][0][1]["status"] == "running"
+    assert len(calls["transitions"]) == 1
+
+
+def test_analysis_uses_original_job_snapshot(monkeypatch):
+    from app.schemas.resources import JobResult
+
+    snapshot = JobResult(id="job_1", title="Old title", raw_jd="Old JD", version=1)
+    row = {**ANALYSIS_ROW, "job_snapshot": snapshot.model_dump()}
+    calls = _analysis_calls(monkeypatch, row=row)
+    seen = []
+
+    class Agent:
+        async def run_analysis(self, *, job, **kwargs):
+            seen.append(job)
+            return ANALYSIS_RESULT
+
+    monkeypatch.setattr(worker, "_load_agent", lambda: Agent())
+    monkeypatch.setattr(worker, "load_job", lambda *a: pytest.fail("must use snapshot"))
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+    assert seen[0].raw_jd == "Old JD"
+    assert calls["saved"]
+
+
+def test_legacy_analysis_rejects_changed_job_version(monkeypatch):
+    calls = _analysis_calls(monkeypatch, job=SimpleNamespace(id="job_1", version=2))
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+    assert calls["transitions"][1][1]["error"].code == "JOB_VERSION_CHANGED"
+    assert calls["saved"] == []
+
+
+def test_analysis_worker_runs_real_agent_and_assembles_pdf_evidence(monkeypatch):
+    import json
+
+    from app.agent.config import AgentSettings
+    from app.agent.models import ModelCompletion
+    from app.agent.pipeline import LangGraphAnalysisAgent
+    from app.schemas.resources import DocumentResult, JobResult
+
+    job = JobResult(id="job_1", title="Developer", raw_jd="Python development", version=1)
+    row = {**ANALYSIS_ROW, "job_snapshot": job.model_dump()}
+    calls = _analysis_calls(monkeypatch, row=row)
+
+    class Model:
+        is_test_double = True
+
+        async def complete(self, *, system, payload, output_schema):
+            if output_schema.__name__ == "RequirementBatch":
+                data = {"requirements": [{"text": "Python development", "category": "required"}]}
+            else:
+                data = {
+                    "assessments": [
+                        {
+                            "requirement_id": payload["requirements"][0]["id"],
+                            "status": "supported",
+                            "evidence_ids": ["chunk_1"],
+                            "explanation": "The PDF describes Python development.",
+                            "missing_information": [],
+                        }
+                    ]
+                }
+            return ModelCompletion(content=json.dumps(data), model_version="test-model")
+
+    class CandidateSource:
+        async def retrieve_evidence(self, **kwargs):
+            return SimpleNamespace(
+                retrieval_config_version="test-retrieval",
+                evidence=[
+                    SimpleNamespace(
+                        chunk_id="chunk_1", document_id="doc_x", version=1, corpus="personal"
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(
+        worker,
+        "_load_agent",
+        lambda: LangGraphAnalysisAgent(Model(), AgentSettings(_env_file=None)),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_build_retriever",
+        lambda settings: worker._MongoEvidenceRetriever(settings, CandidateSource()),
+    )
+    monkeypatch.setattr(
+        worker,
+        "list_chunks_by_ids",
+        lambda *a: [
+            {"id": "chunk_1", "text": "Python development", "locator": {"kind": "pdf", "page": 2}}
+        ],
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_document",
+        lambda *a: DocumentResult(
+            id="doc_x", kind="resume", filename="resume.pdf", current_version=1, status="ready"
+        ),
+    )
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+    assert [entry[1]["status"] for entry in calls["transitions"]] == ["running", "succeeded"]
+    result = calls["saved"][0][1]
+    assert result.matches[0].status == "supported"
+    assert result.matches[0].evidence_refs[0].chunk_id == "chunk_1"
+    assert result.retrieval_config_version == "test-retrieval"
+
+
+def test_mongo_evidence_retriever_fills_candidates_from_chunks(monkeypatch):
+    candidates = [
+        SimpleNamespace(
+            chunk_id="chunk_1",
+            document_id="doc_x",
+            version=1,
+            corpus="personal",
+            retrieval_score=0.9,
+        ),
+        SimpleNamespace(
+            chunk_id="chunk_gone",
+            document_id="doc_x",
+            version=1,
+            corpus="personal",
+            retrieval_score=0.8,
+        ),
+    ]
+
+    class Source:
+        retrieval_config_version = "retrieval-v1"
+
+        async def retrieve_evidence(self, *, user_id, query, document_versions, top_k):
+            return SimpleNamespace(evidence=candidates, retrieval_config_version="retrieval-v1")
+
+    monkeypatch.setattr(
+        worker,
+        "list_chunks_by_ids",
+        lambda settings, user_id, ids: [
+            {"id": "chunk_1", "text": "led a team", "locator": {"kind": "pdf", "page": 2}}
+        ],
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_document",
+        lambda settings, user_id, document_id: SimpleNamespace(filename="resume.pdf"),
+    )
+    retriever = worker._MongoEvidenceRetriever(Settings(_env_file=None, app_env="test"), Source())
+
+    evidence = asyncio.run(
+        retriever.retrieve_evidence(
+            user_id="user_one",
+            query="team leadership",
+            document_versions=[DocumentVersion(document_id="doc_x", version=1)],
+            top_k=5,
+        )
+    )
+
+    assert len(evidence) == 1
+    item = evidence[0]
+    assert item.chunk_id == "chunk_1"
+    assert item.quote == "led a team"
+    assert item.filename == "resume.pdf"
+    assert item.source_type == "personal"
+    assert item.locator.kind == "pdf" and item.locator.page == 2
+    # D's pipeline stamps retrieval_config_version from the retriever; it must
+    # be filled from member C's query result, not left empty.
+    assert retriever.retrieval_config_version == "retrieval-v1"

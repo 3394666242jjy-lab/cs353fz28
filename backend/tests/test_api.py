@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.dependencies import current_user
 from app.config import Settings
 from app.main import create_app
-from app.schemas.resources import DocumentResult, UserResult
+from app.schemas.resources import DocumentResult, JobResult, UserResult
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -58,23 +58,6 @@ def test_dependency_errors_never_echo_connection_credentials(monkeypatch, client
     assert response.json()["data"]["dependencies"]["mongodb"] == "unavailable"
     assert "DO-NOT-ECHO" not in response.text
     assert "private-host" not in response.text
-
-
-@pytest.mark.parametrize(
-    ("method", "path", "payload"),
-    [
-        ("post", "/api/v1/analyses", {"job_id": "job_1", "document_ids": ["doc_1"]}),
-        ("get", "/api/v1/analyses/analysis_1", None),
-    ],
-)
-def test_unimplemented_business_never_returns_fake_success(client, method, path, payload):
-    response = (
-        client.request(method, path, json=payload) if payload else client.request(method, path)
-    )
-    assert response.status_code == 501
-    assert response.json()["error"]["code"] == "NOT_IMPLEMENTED"
-    assert response.json()["request_id"] == response.headers["x-request-id"]
-    assert "data" not in response.json()
 
 
 def _auth_as_user_one(client):
@@ -363,6 +346,267 @@ def test_evidence_not_found_when_chunk_or_document_missing(
     )
     monkeypatch.setattr("app.api.routes.documents_get", lambda settings, user_id, doc_id: document)
     response = client.get("/api/v1/evidence/chunk_1?version=1")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_create_analysis_requires_authentication(client):
+    response = client.post("/api/v1/analyses", json={"job_id": "job_1", "document_ids": ["doc_1"]})
+    assert response.status_code == 401
+
+
+def _ready_document(document_id: str, version: int = 1):
+    return DocumentResult(
+        id=document_id,
+        kind="resume",
+        filename="resume.pdf",
+        current_version=version,
+        status="ready",
+    )
+
+
+def test_create_analysis_returns_not_ready_when_document_pending(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.load_job",
+        lambda settings, user_id, job_id: JobResult(
+            id=job_id, title="Demo", raw_jd="JD", version=1
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: DocumentResult(
+            id=document_id,
+            kind="resume",
+            filename="resume.pdf",
+            current_version=1,
+            status="processing",
+        ),
+    )
+    response = client.post("/api/v1/analyses", json={"job_id": "job_1", "document_ids": ["doc_1"]})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "DOCUMENT_NOT_READY"
+
+
+@pytest.mark.parametrize("missing", ["job", "document"])
+def test_create_analysis_returns_404_for_missing_job_or_document(client, monkeypatch, missing):
+    _auth_as_user_one(client)
+    job = None if missing == "job" else JobResult(id="job_1", title="Demo", raw_jd="JD", version=1)
+    document = None if missing == "document" else _ready_document("doc_1")
+    monkeypatch.setattr("app.api.routes.load_job", lambda settings, user_id, job_id: job)
+    monkeypatch.setattr(
+        "app.api.routes.documents_get", lambda settings, user_id, document_id: document
+    )
+    response = client.post("/api/v1/analyses", json={"job_id": "job_1", "document_ids": ["doc_1"]})
+    assert response.status_code == 404
+
+
+def test_create_analysis_pins_versions_and_dispatches(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.load_job",
+        lambda settings, user_id, job_id: JobResult(
+            id=job_id, title="Demo", raw_jd="JD", version=2
+        ),
+    )
+    seen_versions = {}
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: _ready_document(document_id, version=3),
+    )
+
+    def fake_create(settings, user_id, *, job_id, job_version, document_versions, job_snapshot):
+        seen_versions["job_version"] = job_version
+        seen_versions["snapshot"] = job_snapshot
+        seen_versions["document_versions"] = document_versions
+        return "analysis_new"
+
+    created = {}
+    monkeypatch.setattr("app.api.routes.analyses_create", fake_create)
+
+    def fake_create_execution(settings, user_id, payload):
+        created["payload"] = payload
+        return "exec_new"
+
+    monkeypatch.setattr("app.api.routes.create_execution", fake_create_execution)
+    dispatched = {}
+    monkeypatch.setattr(
+        "app.api.routes.dispatch_analysis_task",
+        lambda settings, **kwargs: dispatched.update(kwargs),
+    )
+    response = client.post(
+        "/api/v1/analyses", json={"job_id": "job_1", "document_ids": ["doc_1", "doc_2"]}
+    )
+    assert response.status_code == 202
+    assert response.json()["data"] == {"execution_id": "exec_new"}
+    assert created["payload"].type == "analysis"
+    assert seen_versions["job_version"] == 2
+    assert seen_versions["snapshot"].version == 2
+    assert [(item.document_id, item.version) for item in seen_versions["document_versions"]] == [
+        ("doc_1", 3),
+        ("doc_2", 3),
+    ]
+    assert dispatched == {
+        "analysis_id": "analysis_new",
+        "user_id": "user_one",
+        "execution_id": "exec_new",
+    }
+
+
+def test_create_analysis_execution_failure_marks_record_failed(client, monkeypatch):
+    from pymongo.errors import PyMongoError
+
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.load_job",
+        lambda settings, user_id, job_id: JobResult(
+            id=job_id, title="Demo", raw_jd="JD", version=1
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: _ready_document(document_id),
+    )
+    monkeypatch.setattr("app.api.routes.analyses_create", lambda *a, **kw: "analysis_new")
+
+    def fail(*args, **kwargs):
+        raise PyMongoError("down")
+
+    monkeypatch.setattr("app.api.routes.create_execution", fail)
+    failed = []
+    monkeypatch.setattr(
+        "app.api.routes.set_analysis_failed", lambda *a, **kw: failed.append((a, kw))
+    )
+    response = client.post("/api/v1/analyses", json={"job_id": "job_1", "document_ids": ["doc_1"]})
+    assert response.status_code == 503
+    assert failed[0][0][2] == "analysis_new"
+    assert failed[0][1]["error"] == "创建分析任务失败，请重试。"
+
+
+def test_create_analysis_dispatch_failure_fails_execution_and_record(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.load_job",
+        lambda settings, user_id, job_id: JobResult(
+            id=job_id, title="Demo", raw_jd="JD", version=1
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: _ready_document(document_id),
+    )
+    monkeypatch.setattr("app.api.routes.analyses_create", lambda *a, **k: "analysis_new")
+    monkeypatch.setattr(
+        "app.api.routes.create_execution", lambda settings, user_id, payload: "exec_new"
+    )
+
+    def broken_dispatch(settings, **kwargs):
+        raise RuntimeError("broker unreachable")
+
+    monkeypatch.setattr("app.api.routes.dispatch_analysis_task", broken_dispatch)
+    transitions = []
+    monkeypatch.setattr(
+        "app.api.routes.transition_execution",
+        lambda settings, user_id, execution_id, **kwargs: (
+            transitions.append((execution_id, kwargs)) or True
+        ),
+    )
+    failures = []
+    monkeypatch.setattr(
+        "app.api.routes.set_analysis_failed",
+        lambda settings, user_id, analysis_id, **kwargs: failures.append((analysis_id, kwargs)),
+    )
+    response = client.post("/api/v1/analyses", json={"job_id": "job_1", "document_ids": ["doc_1"]})
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "TASK_DISPATCH_FAILED"
+    assert transitions[0][1]["status"] == "failed"
+    assert transitions[0][1]["error"].code == "TASK_DISPATCH_FAILED"
+    assert failures == [("analysis_new", {"error": "分析任务投递失败，请重试。"})]
+
+
+def _analysis_row(status: str, **overrides):
+    row = {
+        "id": "analysis_1",
+        "job_id": "job_1",
+        "job_version": 1,
+        "document_versions": [{"document_id": "doc_1", "version": 1}],
+        "matches": [
+            {
+                "requirement_id": "req_1",
+                "requirement": "Python",
+                "category": "required",
+                "status": "supported",
+                "evidence_refs": [{"chunk_id": "c1", "document_id": "doc_1", "version": 1}],
+                "explanation": "evidence",
+                "missing_information": [],
+            }
+        ],
+        "warnings": ["w"],
+        "trace_id": None,
+        "prompt_version": None,
+        "retrieval_config_version": None,
+        "model_version": None,
+        "status": status,
+        "error": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_get_analysis_requires_authentication(client):
+    assert client.get("/api/v1/analyses/analysis_1").status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [("pending", "ANALYSIS_NOT_READY"), ("failed", "ANALYSIS_FAILED")],
+)
+def test_get_analysis_conflicts_until_ready(client, monkeypatch, status, code):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.analyses_get",
+        lambda settings, user_id, analysis_id: _analysis_row(
+            status, error="boom" if status == "failed" else None
+        ),
+    )
+    response = client.get("/api/v1/analyses/analysis_1")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == code
+    if status == "failed":
+        assert response.json()["error"]["message"] == "boom"
+
+
+def test_get_analysis_returns_result_and_marks_stale(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.analyses_get",
+        lambda settings, user_id, analysis_id: _analysis_row("ready"),
+    )
+    # The job moved on after the analysis pinned job_version=1.
+    monkeypatch.setattr(
+        "app.api.routes.load_job",
+        lambda settings, user_id, job_id: JobResult(
+            id=job_id, title="Demo", raw_jd="JD", version=2
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: _ready_document(document_id),
+    )
+    response = client.get("/api/v1/analyses/analysis_1")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["id"] == "analysis_1"
+    assert data["stale"] is True
+    assert data["job_version"] == 1
+    assert data["matches"][0]["status"] == "supported"
+    assert data["warnings"] == ["w"]
+
+
+def test_get_analysis_not_found_for_missing_or_foreign(client, monkeypatch):
+    _auth_as_user_one(client)
+    monkeypatch.setattr("app.api.routes.analyses_get", lambda settings, user_id, analysis_id: None)
+    response = client.get("/api/v1/analyses/analysis_1")
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
 

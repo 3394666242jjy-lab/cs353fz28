@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "CareerPilot API",
-    "description": "Local M1 development. Login, /me, JD creation/query and document upload with indexing executions are implemented; analysis routes remain stubs.",
+    "description": "Local M1 development. Login, /me, jobs, document upload with indexing executions, evidence lookup and the analysis flow are implemented; C's RAG pipeline and D's agent integrate via the workers on the integration branch.",
     "version": "0.1.0"
   },
   "paths": {
@@ -895,7 +895,7 @@
             }
           },
           "404": {
-            "description": "Resource not found",
+            "description": "Job or document not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -933,8 +933,43 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Invalid or missing bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A referenced document is not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable or task dispatch failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
       }
     },
     "/api/v1/analyses/{analysis_id}": {
@@ -944,6 +979,11 @@
         ],
         "summary": "Get Analysis",
         "operationId": "get_analysis_api_v1_analyses__analysis_id__get",
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "parameters": [
           {
             "name": "analysis_id",
@@ -967,7 +1007,7 @@
             }
           },
           "404": {
-            "description": "Resource not found",
+            "description": "Analysis not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -998,6 +1038,36 @@
           },
           "501": {
             "description": "Business module not implemented",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or missing bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Analysis is not in a terminal ready state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database unavailable",
             "content": {
               "application/json": {
                 "schema": {
