@@ -31,7 +31,7 @@ export function describeError(err: unknown): UiError {
       case 501:
         return {
           code: 'NOT_IMPLEMENTED',
-          message: '后端业务接口尚未实现（当前为骨架阶段）。请等 B 的 #7 合并后再联调。',
+          message: '当前服务尚未实现此功能，请检查后端版本。',
         };
       default:
         return { code: err.code ?? `HTTP_${err.status}`, message: err.message };

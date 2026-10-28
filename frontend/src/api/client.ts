@@ -14,17 +14,23 @@ type AnalysisResult = components['schemas']['AnalysisResult'];
 type Evidence = components['schemas']['Evidence'];
 type DocumentAccepted = components['schemas']['DocumentAccepted'];
 type DocumentResult = components['schemas']['DocumentResult'];
+type LoginRequest = components['schemas']['LoginRequest'];
+type TokenResult = components['schemas']['TokenResult'];
+export type UserResult = components['schemas']['UserResult'];
 
 const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const TOKEN_KEY = 'careerpilot.token';
 
-/** 登录后由身份模块写入；M1 未实现登录时保持为空，请求不带 Authorization。 */
 export function setAuthToken(token: string | null) {
   if (token) {
     sessionStorage.setItem(TOKEN_KEY, token);
   } else {
     sessionStorage.removeItem(TOKEN_KEY);
   }
+}
+
+export function hasAuthToken(): boolean {
+  return Boolean(sessionStorage.getItem(TOKEN_KEY));
 }
 
 function authHeaders(): Record<string, string> {
@@ -71,6 +77,15 @@ async function request<T>(
   });
   const payload = (await response.json().catch(() => null)) as Envelope<T> | ErrorEnvelope | null;
   if (!response.ok && !allowedStatuses.includes(response.status)) {
+    const requestToken = headers.Authorization;
+    if (
+      response.status === 401 &&
+      path !== '/api/v1/auth/login' &&
+      requestToken &&
+      requestToken === authHeaders().Authorization
+    ) {
+      window.dispatchEvent(new Event('careerpilot:session-expired'));
+    }
     const error = payload && 'error' in payload ? payload.error : null;
     throw new ApiError(
       error?.message ?? '服务暂时不可用。',
@@ -86,6 +101,8 @@ async function request<T>(
 }
 
 export const api = {
+  login: (body: LoginRequest) => request<TokenResult>('POST', '/api/v1/auth/login', { body }),
+  me: () => request<UserResult>('GET', '/api/v1/me'),
   live: () => request<Liveness>('GET', '/health/live'),
   ready: () => request<Readiness>('GET', '/health/ready', { allowedStatuses: [503] }),
   meta: () => request<Capabilities>('GET', '/api/v1/meta'),

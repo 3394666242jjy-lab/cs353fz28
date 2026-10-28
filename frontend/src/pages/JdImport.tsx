@@ -231,8 +231,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     if (ids.length === 0) {
       setError({
         code: 'NO_DOCUMENTS',
-        message:
-          '还没有已就绪的资料：请先在「资料准备」上传资料（真实上传待 B 的 #7 接入），或点「样例演练」查看交互。',
+        message: '还没有已就绪的资料：请先登录并在「资料准备」上传资料，或点「样例演练」查看交互。',
       });
       return;
     }
@@ -379,8 +378,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
       </div>
 
       <p className="small muted">
-        真实分析调用 B 的 API：POST /jobs → POST /analyses → 轮询 GET /executions/{'{id}'}
-        ，完成后读取 GET /analyses/{'{id}'}；样例演练不访问后端。
+        真实分析根据已上传的资料查找证据；样例演练使用合成数据，不访问后端。
       </p>
 
       <div className="form-actions">

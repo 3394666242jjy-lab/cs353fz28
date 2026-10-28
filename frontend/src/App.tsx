@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { api } from './api/client';
+import { useEffect, useState, type FormEvent } from 'react';
+import { ApiError, api, hasAuthToken, setAuthToken, type UserResult } from './api/client';
+import { describeError } from './api/errors';
 import { sampleInputs } from './api/fixtures';
 import StatusBadge from './components/StatusBadge';
 import AnalysisPanel from './pages/AnalysisPanel';
@@ -45,6 +46,91 @@ export default function App() {
   const [documentIds, setDocumentIds] = useState<string[]>(readReadyDocuments);
   const [title, setTitle] = useState(() => readPendingJob()?.title ?? '后端开发实习生');
   const [jd, setJd] = useState(() => readPendingJob()?.jd ?? '');
+  const [user, setUser] = useState<UserResult | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  function clearSessionData() {
+    sessionStorage.removeItem('careerpilot.pending_documents');
+    sessionStorage.removeItem('careerpilot.pending_analysis');
+    sessionStorage.removeItem('careerpilot.owner');
+    setDocumentIds([]);
+    setHasRealAnalysis(false);
+    setAnalysisVisible(false);
+    setJd('');
+  }
+
+  function acceptUser(current: UserResult) {
+    if (sessionStorage.getItem('careerpilot.owner') !== current.id) clearSessionData();
+    sessionStorage.setItem('careerpilot.owner', current.id);
+    setUser(current);
+  }
+
+  useEffect(() => {
+    function expired() {
+      setAuthToken(null);
+      setUser(null);
+      clearSessionData();
+      setAuthError('登录已过期，请重新登录。');
+      setStep(0);
+    }
+    window.addEventListener('careerpilot:session-expired', expired);
+    return () => window.removeEventListener('careerpilot:session-expired', expired);
+  }, []);
+
+  useEffect(() => {
+    if (!hasAuthToken()) return;
+    let active = true;
+    void api
+      .me()
+      .then((response) => {
+        if (active) acceptUser(response.data);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        if (error instanceof ApiError && error.status === 401) {
+          setAuthToken(null);
+          clearSessionData();
+        }
+        setAuthError(describeError(error).message);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError('');
+    try {
+      const token = await api.login({ email, password });
+      setAuthToken(token.data.access_token);
+      const response = await api.me();
+      acceptUser(response.data);
+      setPassword('');
+    } catch (error) {
+      setAuthToken(null);
+      setAuthError(
+        error instanceof ApiError && error.status === 401
+          ? '邮箱或密码错误。'
+          : describeError(error).message,
+      );
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  function logout() {
+    setAuthToken(null);
+    setUser(null);
+    setPassword('');
+    setAuthError('');
+    clearSessionData();
+    setStep(0);
+  }
 
   useEffect(() => {
     let active = true;
@@ -175,7 +261,7 @@ export default function App() {
           <span>
             工作台 <span aria-hidden="true">/</span> {steps[step]}
           </span>
-          <StatusBadge label="本地会话 · 未登录" />
+          <StatusBadge label={user ? `已登录 · ${user.display_name}` : '本地会话 · 未登录'} />
         </header>
         <div className="page-intro">
           <p className="eyebrow">CAREERPILOT / WORKSPACE</p>
@@ -185,10 +271,54 @@ export default function App() {
         <div className="demo-notice">
           <span className="notice-label">开发预览</span>
           <p>
-            上传与分析已接入 M1 契约，但后端业务接口尚未实现（返回 501），需等 B 的 #7 与 C 的 #8
-            合并后再联调；点「样例演练」可离线预览完整交互。
+            登录后可上传资料并发起分析。真实分析需要启动项目依赖并配置模型；「样例演练」可离线预览。
           </p>
         </div>
+
+        <section className="panel session-panel" aria-labelledby="session-title">
+          <h2 id="session-title">{user ? '当前账号' : '登录开发账号'}</h2>
+          {user ? (
+            <div className="session-current">
+              <p>
+                {user.display_name} · {user.email}
+              </p>
+              <button type="button" className="text-button" onClick={logout}>
+                退出登录
+              </button>
+            </div>
+          ) : (
+            <form className="session-form" onSubmit={(event) => void login(event)}>
+              <label>
+                邮箱
+                <input
+                  type="email"
+                  required
+                  autoComplete="username"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </label>
+              <label>
+                密码
+                <input
+                  type="password"
+                  required
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+              <button type="submit" className="primary-button" disabled={authBusy}>
+                {authBusy ? '登录中…' : '登录'}
+              </button>
+            </form>
+          )}
+          {authError && (
+            <p className="error-box" role="alert">
+              {authError}
+            </p>
+          )}
+        </section>
 
         {step === 0 && (
           <section aria-labelledby="documents-title">
@@ -210,7 +340,7 @@ export default function App() {
                 <p className="muted">
                   M1 支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。
                 </p>
-                <DocumentUpload onReadyChange={setDocumentIds} />
+                <DocumentUpload key={user?.id ?? 'anonymous'} onReadyChange={setDocumentIds} />
               </div>
               <div className="panel sample-panel">
                 <span className="eyebrow">无需个人资料</span>
@@ -280,7 +410,7 @@ export default function App() {
               <p id="sample-guidance" className="small muted">
                 {sampleLoaded
                   ? '已载入匹配的合成资料。可以查看固定样例分析。'
-                  : '自定义内容的真实分析尚未接入；载入示例可预览完整交互。'}
+                  : '准备已就绪的资料后，可对岗位内容发起真实分析。'}
               </p>
 
               <div className="form-actions">
@@ -322,6 +452,7 @@ export default function App() {
           hidden={step === 0 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
         >
           <JdImport
+            key={user?.id ?? 'anonymous'}
             jd={jd}
             title={title}
             documentIds={documentIds}
@@ -333,7 +464,7 @@ export default function App() {
         </div>
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>
-          <span>开发预览 / 合成数据</span>
+          <span>开发预览</span>
         </footer>
       </main>
     </div>
