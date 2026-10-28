@@ -262,7 +262,7 @@ def save_indexed_version(
                 {"$set": {"status": "failed", "updated_at": datetime.now(UTC)}},
             )
             raise
-        database.document_versions.update_one(
+        published = database.document_versions.update_one(
             {
                 "document_id": document_id,
                 "version": version,
@@ -283,7 +283,9 @@ def save_indexed_version(
                 }
             },
         )
-        database.documents.update_one(
+        if published.matched_count != 1:
+            raise RuntimeError("Document version changed while it was being written")
+        current = database.documents.update_one(
             {"id": document_id, "user_id": user_id, "deleted_at": None},
             {
                 "$set": {
@@ -294,6 +296,8 @@ def save_indexed_version(
                 }
             },
         )
+        if current.matched_count != 1:
+            raise RuntimeError("Document was deleted while its version was being written")
 
 
 def list_chunks_by_ids(

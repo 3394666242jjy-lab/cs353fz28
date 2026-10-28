@@ -28,7 +28,10 @@ def settings():
 def database(monkeypatch):
     connection = MagicMock()
     monkeypatch.setattr("app.services.documents.database_connection", connection)
-    return connection.return_value.__enter__.return_value
+    db = connection.return_value.__enter__.return_value
+    db.document_versions.update_one.return_value.matched_count = 1
+    db.documents.update_one.return_value.matched_count = 1
+    return db
 
 
 def _chunk(chunk_id: str, page: int) -> SimpleNamespace:
@@ -187,6 +190,16 @@ def test_published_version_cannot_be_replaced(settings, database):
     with pytest.raises(DuplicateKeyError):
         save_indexed_version(settings, "user_one", "doc_x", PAYLOAD, [_chunk("c1", 1)])
     database.chunks.delete_many.assert_not_called()
+    database.documents.update_one.assert_not_called()
+
+
+def test_version_is_not_published_if_write_claim_is_lost(settings, database):
+    database.document_versions.update_one.side_effect = [
+        SimpleNamespace(matched_count=1),
+        SimpleNamespace(matched_count=0),
+    ]
+    with pytest.raises(RuntimeError, match="changed while"):
+        save_indexed_version(settings, "user_one", "doc_x", PAYLOAD, [_chunk("c1", 1)])
     database.documents.update_one.assert_not_called()
 
 
