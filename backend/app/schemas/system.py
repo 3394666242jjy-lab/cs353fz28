@@ -20,7 +20,7 @@ class Capabilities(ContractModel):
     version: str = "0.1.0"
     features: dict[str, bool] = {
         "authentication": True,
-        "document_upload": False,
+        "document_upload": True,
         "job_import": True,
         "rag": False,
         "agent_analysis": False,

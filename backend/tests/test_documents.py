@@ -11,6 +11,7 @@ from app.config import Settings
 from app.schemas.resources import DocumentResult
 from app.services.documents import (
     create_document,
+    get_chunk,
     get_document,
     list_chunks_by_ids,
     list_documents,
@@ -172,6 +173,14 @@ def test_save_indexed_version_accepts_text_locator(settings, database):
 def test_save_indexed_version_rejects_bad_payload(settings, database):
     with pytest.raises(ValidationError):
         save_indexed_version(settings, "user_one", "doc_x", {"version": 0}, [])
+
+
+def test_get_chunk_scopes_by_owner_and_version(settings, database):
+    database.chunks.find_one.return_value = {"id": "chunk_1"}
+    row = get_chunk(settings, "user_one", "chunk_1", 2)
+    assert row == {"id": "chunk_1"}
+    query = database.chunks.find_one.call_args.args[0]
+    assert query == {"id": "chunk_1", "user_id": "user_one", "version": 2, "deleted_at": None}
 
 
 def test_failed_chunk_write_never_publishes_version(settings, database):

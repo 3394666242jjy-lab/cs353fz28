@@ -294,7 +294,7 @@ export interface components {
              * Features
              * @default {
              *       "authentication": true,
-             *       "document_upload": false,
+             *       "document_upload": true,
              *       "job_import": true,
              *       "rag": false,
              *       "agent_analysis": false
@@ -1084,8 +1084,35 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_DocumentAccepted_"];
                 };
             };
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
             /** @description Resource not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description File exceeds the 10 MiB limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Unsupported file type */
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1113,6 +1140,15 @@ export interface operations {
             };
             /** @description Business module not implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable or task dispatch failed */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1568,7 +1604,16 @@ export interface operations {
                     "application/json": components["schemas"]["Envelope_Evidence_"];
                 };
             };
-            /** @description Resource not found */
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Evidence not found or not accessible */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -1597,6 +1642,15 @@ export interface operations {
             };
             /** @description Business module not implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

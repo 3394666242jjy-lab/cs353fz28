@@ -300,6 +300,19 @@ def save_indexed_version(
             raise RuntimeError("Document was deleted while its version was being written")
 
 
+def get_chunk(
+    settings: Settings, user_id: str, chunk_id: str, version: int
+) -> dict[str, Any] | None:
+    """Return one live chunk owned by the user at an exact version, or None."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        row = database.chunks.find_one(
+            {"id": chunk_id, "user_id": user_id, "version": version, "deleted_at": None},
+            {"_id": 0},
+        )
+    return row
+
+
 def list_chunks_by_ids(
     settings: Settings, user_id: str, chunk_ids: list[str]
 ) -> list[dict[str, Any]]:
