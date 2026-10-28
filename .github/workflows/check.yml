@@ -41,6 +41,11 @@ jobs:
           RUN_MONGO_JOB_TESTS: "1"
           RUN_MONGO_STORAGE_TESTS: "1"
         run: uv run pytest tests/test_auth_integration.py tests/test_jobs_integration.py tests/test_data_integration.py -q
+      - name: Show infrastructure diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps -a
+          docker compose logs --tail=150 mongodb redis qdrant
       - name: Stop CI infrastructure
         if: always()
         run: docker compose down --volumes
