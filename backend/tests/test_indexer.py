@@ -23,7 +23,7 @@ PROJECT_BYTES = (ROOT / "examples" / "project-demo.md").read_bytes()
 
 DIMENSION = 64
 EMBEDDING_URL = "https://embedding.test/v1/embeddings"
-DELETE_URL = "https://qdrant.test/collections/careerpilot_chunks/points/delete"
+SCROLL_URL = "https://qdrant.test/collections/careerpilot_chunks/points/scroll"
 UPSERT_URL = "https://qdrant.test/collections/careerpilot_chunks/points?wait=true"
 
 
@@ -64,8 +64,8 @@ class RoutingHandler:
                 for i in range(len(body["input"]))
             ]
             return httpx.Response(200, json={"data": items, "model": "text-embedding-v4"})
-        if url == DELETE_URL:
-            return httpx.Response(200, json={"result": {"status": "ok"}})
+        if url == SCROLL_URL:
+            return httpx.Response(200, json={"result": {"points": []}})
         if url == UPSERT_URL:
             return httpx.Response(200, json={"result": {"status": "ok"}})
         raise AssertionError(f"unexpected request: {url}")
@@ -141,7 +141,7 @@ def test_project_demo_end_to_end_index_build():
     assert report.chunks[0].vector_id == point_id(first)
 
     # 顺序与结构：先向量化，再按版本删除，最后 upsert。
-    assert urls(handler) == [EMBEDDING_URL, DELETE_URL, UPSERT_URL]
+    assert urls(handler) == [EMBEDDING_URL, SCROLL_URL, UPSERT_URL]
     delete_body = json.loads(handler.calls[1].content)
     conditions = {item["key"]: item["match"]["value"] for item in delete_body["filter"]["must"]}
     assert conditions == {"user_id": "user_c", "document_id": "doc_demo", "version": 1}
@@ -154,8 +154,8 @@ def test_project_demo_end_to_end_index_build():
     )
 
 
-def test_reindexing_the_same_version_is_idempotent():
-    """同版本重跑两次：报告完全一致，且每次都走 删除→upsert（不追加）。"""
+def test_chunk_ids_for_same_version_are_deterministic():
+    """在隔离存储中，相同版本和内容产生相同标识。"""
     handler = RoutingHandler()
     embedder, store, config = pipeline(handler)
 
@@ -165,30 +165,28 @@ def test_reindexing_the_same_version_is_idempotent():
     assert first == second
     assert [c.chunk_id for c in first.chunks] == [c.chunk_id for c in second.chunks]
     assert [c.vector_id for c in first.chunks] == [c.vector_id for c in second.chunks]
-    assert urls(handler).count(DELETE_URL) == 2
+    assert urls(handler).count(SCROLL_URL) == 2
     assert urls(handler).count(UPSERT_URL) == 2
 
 
-def test_empty_document_clears_the_version_without_embedding():
-    """空文档：不调用 Embedding，仍执行删除（清空该版本）。"""
+def test_empty_document_does_not_touch_existing_index():
+    """空文档：明确失败，不调用 Embedding 或删除已有向量。"""
     handler = RoutingHandler()
     embedder, store, config = pipeline(handler)
 
-    report = asyncio.run(
-        index_document(
-            b"\n\n",
-            user_id="user_c",
-            document_id="doc_demo",
-            version=1,
-            embedder=embedder,
-            store=store,
-            settings=config,
+    with pytest.raises(ValueError, match="没有可索引的文本"):
+        asyncio.run(
+            index_document(
+                b"\n\n",
+                user_id="user_c",
+                document_id="doc_demo",
+                version=1,
+                embedder=embedder,
+                store=store,
+                settings=config,
+            )
         )
-    )
-
-    assert report.chunk_count == 0
-    assert report.chunks == []
-    assert urls(handler) == [DELETE_URL]
+    assert handler.calls == []
 
 
 def test_parse_failure_never_touches_embedding_or_store():

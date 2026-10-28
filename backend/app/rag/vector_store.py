@@ -12,8 +12,7 @@ Qdrant 容器（http://127.0.0.1:6333，Key 留空即不发鉴权头）。两种
 索引数据可按文档重建，切换环境不影响已约定的字段。
 
 适配器直接调用 Qdrant REST API：不引 SDK，也与架构文档提到的未来 Milvus 选项
-保持可替换。point id 确定性生成，因此同一文档版本重复入库是幂等的——重试只会
-覆盖同一些点，不会产生重复向量。
+保持可替换。point id 确定性生成；已写入的文档版本不可原地覆盖。
 """
 
 import asyncio
@@ -123,7 +122,7 @@ class VectorStore(Protocol):
         version: int,
         points: list[ChunkPoint],
     ) -> None:
-        """整体替换一个文档版本的点：先删除旧点再写入，空列表表示清空该版本。"""
+        """写入尚不存在的文档版本；已有向量时拒绝覆盖。"""
         ...
 
     async def search(
@@ -239,12 +238,13 @@ class QdrantVectorStore:
         version: int,
         points: list[ChunkPoint],
     ) -> None:
-        """整体替换一个文档版本的点（先删后写）。
+        """Write an immutable document version; never delete published points.
 
-        删除前完成两项校验：所有点必须属于该 user/document/version，且向量维度
-        必须正确——坏批次在删除发生前就被拒绝，不会把好索引清成空。空列表同样
-        执行删除：重索引产出零 chunk 的版本不得残留可检索的旧点。
+        If any points already exist, require a new document version. A partial
+        failed build must be cleaned up before retrying that unpublished version.
         """
+        if not points:
+            raise VectorStoreError("不能为空文档发布向量", retryable=False)
         for point in points:
             if (point.user_id, point.document_id, point.version) != (user_id, document_id, version):
                 raise VectorStoreError(
@@ -264,15 +264,22 @@ class QdrantVectorStore:
                     {"key": "document_id", "match": {"value": document_id}},
                     {"key": "version", "match": {"value": version}},
                 ]
-            }
+            },
+            "limit": 1,
+            "with_payload": False,
+            "with_vector": False,
         }
         response = await self._send(
-            "POST", f"/collections/{self._collection}/points/delete", json_body=filter_body
+            "POST", f"/collections/{self._collection}/points/scroll", json_body=filter_body
         )
         if response.status_code != 200:
             raise self._status_error(response)
-        if points:
-            await self.upsert_chunks(points)
+        existing = response.json().get("result", {}).get("points")
+        if not isinstance(existing, list):
+            raise VectorStoreError("向量库返回了无效的版本检查结果", retryable=False)
+        if existing:
+            raise VectorStoreError("文档版本已有向量；请创建新版本，不能原地重建", retryable=False)
+        await self.upsert_chunks(points)
 
     async def search(
         self,
@@ -283,6 +290,8 @@ class QdrantVectorStore:
         top_k: int = 5,
     ) -> list[SearchHit]:
         """按用户隔离执行向量召回，可选限定文档版本，返回 payload 组装的命中列表。"""
+        if document_versions == []:
+            return []
         if len(vector) != self._dimension:
             raise VectorStoreError(
                 f"查询向量为 {len(vector)} 维，应为 {self._dimension} 维", retryable=False

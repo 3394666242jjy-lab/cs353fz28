@@ -381,12 +381,14 @@ def test_vector_store_settings_reject_out_of_range_values():
         settings(vector_store_timeout_seconds=120.0)
 
 
-def test_replace_deletes_the_version_before_upserting():
-    """替换语义：先按 user/document/version 删除，再 upsert，顺序固定。"""
+def test_new_version_checks_for_existing_points_then_upserts():
+    """已发布版本不可原地覆盖，新版本先检查再写入。"""
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
+        if request.url.path.endswith("/scroll"):
+            return httpx.Response(200, json={"result": {"points": []}})
         return ok()
 
     asyncio.run(
@@ -396,26 +398,56 @@ def test_replace_deletes_the_version_before_upserting():
     )
 
     assert calls == [
-        ("POST", "/collections/careerpilot_chunks/points/delete"),
+        ("POST", "/collections/careerpilot_chunks/points/scroll"),
         ("PUT", "/collections/careerpilot_chunks/points"),
     ]
 
 
-def test_replace_without_points_still_clears_the_version():
-    """空点列表也执行删除：零 chunk 的重索引不得残留旧点。"""
+def test_empty_points_cannot_delete_a_version():
+    """空点列表不能删除已有版本。"""
     calls: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
         return ok()
 
-    asyncio.run(
-        store(handler).replace_document_points(
-            user_id="user_demo", document_id="doc_demo", version=1, points=[]
+    with pytest.raises(VectorStoreError):
+        asyncio.run(
+            store(handler).replace_document_points(
+                user_id="user_demo", document_id="doc_demo", version=1, points=[]
+            )
+        )
+    assert calls == []
+
+
+def test_existing_version_is_never_deleted_or_overwritten():
+    calls = []
+
+    def handler(request):
+        calls.append((request.method, request.url.path))
+        return httpx.Response(200, json={"result": {"points": [{"id": "old"}]}})
+
+    with pytest.raises(VectorStoreError, match="不能原地重建"):
+        asyncio.run(
+            store(handler).replace_document_points(
+                user_id="user_demo", document_id="doc_demo", version=1, points=[point()]
+            )
+        )
+    assert calls == [("POST", "/collections/careerpilot_chunks/points/scroll")]
+
+
+def test_empty_document_version_filter_never_searches_all_documents():
+    def handler(request):
+        raise AssertionError("empty version filter must not call Qdrant")
+
+    result = asyncio.run(
+        store(handler).search(
+            user_id="user_demo",
+            vector=[0.1] * DIMENSION,
+            document_versions=[],
         )
     )
-
-    assert calls == [("POST", "/collections/careerpilot_chunks/points/delete")]
+    assert result == []
 
 
 def test_replace_rejects_points_from_another_version_before_any_request():

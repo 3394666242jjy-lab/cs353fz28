@@ -1,7 +1,7 @@
 """文本解析与切分（RAG 模块，成员 C，issue #8）。
 
-M1 只处理 UTF-8 Markdown/TXT，PDF 在 M2。解析器统一换行符并给出 1 起始行号——
-这正是 API 契约与数据库设计文档中引用定位（locator）使用的格式。
+M1 支持 UTF-8 Markdown/TXT 和具有文本层的 PDF。文本使用行号定位，PDF
+逐页提取并使用页码定位；不提供 OCR。
 
 切分器遵守两条不变式：
 
@@ -16,14 +16,18 @@ M1 只处理 UTF-8 Markdown/TXT，PDF 在 M2。解析器统一换行符并给出
 """
 
 import re
+from io import BytesIO
 
 from pydantic import Field
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from app.schemas.analysis import TextLocator
 from app.schemas.common import ContractModel
 
 # 解析器版本：解析规则变化时升级，并随索引进 document_versions.parser_version 留档。
 PARSER_VERSION = "text-utf8-lf-v1"
+PDF_PARSER_VERSION = "pypdf-text-pages-v1"
 
 # Markdown ATX 标题行（允许前置空格），用于识别小节边界；非标题的 # 文本不受影响。
 HEADING_PATTERN = re.compile(r"^ {0,3}#{1,6} ")
@@ -40,22 +44,45 @@ class ParsedDocument(ContractModel):
 
     text: str
     lines: list[str]
+    pages: list[list[str]] | None = None
 
 
 class DocumentChunk(ContractModel):
     """一个 chunk：序号、连续行区间拼出的原文、以及 TextLocator 行号定位。"""
+
+    model_config = {"extra": "forbid", "str_strip_whitespace": False}
 
     ordinal: int = Field(ge=0)
     text: str = Field(min_length=1)
     locator: TextLocator
 
 
-def parse_document(raw: bytes) -> ParsedDocument:
+def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocument:
     """把上传字节解码为归一化文本与 1 起始行号。
 
     UTF-8 解码失败抛 DocumentParseError；CRLF/CR 统一为 LF；文件末尾换行不
     产生幻影空行。quote 与原文的一致性以解析后文本为准。
     """
+    if file_type == ".pdf" or (file_type is None and raw.startswith(b"%PDF-")):
+        try:
+            reader = PdfReader(BytesIO(raw))
+            if reader.is_encrypted:
+                raise DocumentParseError("暂不支持加密 PDF，请上传可直接读取的文件")
+            pages = []
+            for page in reader.pages:
+                text = (page.extract_text() or "").replace("\r\n", "\n").replace("\r", "\n")
+                lines = text.split("\n")
+                while lines and not lines[-1].strip():
+                    lines.pop()
+                pages.append(lines)
+        except DocumentParseError:
+            raise
+        except (PdfReadError, ValueError, OSError, UnicodeError, KeyError) as error:
+            raise DocumentParseError("PDF 文件损坏或无法解析") from error
+        if not any(line.strip() for page in pages for line in page):
+            raise DocumentParseError("PDF 没有可提取的文本层；扫描件暂不支持")
+        lines = [line for page in pages for line in page]
+        return ParsedDocument(text="\n".join(lines), lines=lines, pages=pages)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as error:

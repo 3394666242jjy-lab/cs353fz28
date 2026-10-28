@@ -4,9 +4,7 @@
 成员 B 落库到 document_versions 所需的版本元数据，以及 chunks 集合的 chunk 记录。
 C 拥有这条管线；B 调用它并保存结果。
 
-对同一 (document, version) 重复执行 index_document 是幂等的：chunk_id 与
-Qdrant point id 都是确定性派生，且存储层按版本整体替换而非追加，因此半失败后的
-重试、以及换了切分参数的重索引，都不会留下过期向量。
+已写入的文档版本不可原地重建；更新时应使用新版本，避免破坏旧分析引用的向量。
 """
 
 import uuid
@@ -17,6 +15,7 @@ from pydantic import Field
 from app.config import Settings, get_settings
 from app.rag.chunking import (
     PARSER_VERSION,
+    PDF_PARSER_VERSION,
     chunk_document,
     chunking_config_version,
     parse_document,
@@ -29,7 +28,7 @@ from app.rag.vector_store import (
     get_vector_store,
     point_id,
 )
-from app.schemas.analysis import DocumentVersion, TextLocator
+from app.schemas.analysis import DocumentVersion, PdfLocator, TextLocator
 from app.schemas.common import ContractModel
 
 # M1 语料固定为个人经历（架构文档）；公共知识语料在后续阶段引入。
@@ -39,10 +38,12 @@ CORPUS = "personal"
 class IndexedChunk(ContractModel):
     """一个已索引 chunk：B 落 chunks 集合所需的全部字段（含 Qdrant point id）。"""
 
+    model_config = {"extra": "forbid", "str_strip_whitespace": False}
+
     chunk_id: str
     ordinal: int = Field(ge=0)
     text: str = Field(min_length=1)
-    locator: TextLocator
+    locator: TextLocator | PdfLocator
     vector_id: str
 
 
@@ -88,11 +89,12 @@ async def index_document(
     user_id: str,
     document_id: str,
     version: int,
+    file_type: str | None = None,
     embedder: EmbeddingProvider | None = None,
     store: VectorStore | None = None,
     settings: Settings | None = None,
 ) -> IndexedDocument:
-    """把一个文档版本入库：解析、切分、向量化、整体替换写入，返回版本元数据。
+    """把一个新文档版本入库：解析、切分、向量化、写入，返回版本元数据。
 
     执行顺序刻意安排为"先向量化、后写存储"：模型调用失败时旧索引原样保留，
     不会把一个好版本打成空；依赖（embedder/store/settings）均可注入以便测试。
@@ -101,19 +103,33 @@ async def index_document(
     embedder = embedder or get_embedding_provider(settings)
     store = store or get_vector_store(settings)
 
-    parsed = parse_document(raw)
-    chunks = chunk_document(parsed.lines, max_chars=settings.chunk_max_chars)
-    vectors = await embedder.embed_texts([chunk.text for chunk in chunks])
+    parsed = parse_document(raw, file_type=file_type)
+    if parsed.pages is None:
+        chunks = [
+            (chunk.text, chunk.locator)
+            for chunk in chunk_document(parsed.lines, max_chars=settings.chunk_max_chars)
+        ]
+        parser_version = PARSER_VERSION
+    else:
+        chunks = [
+            (chunk.text, PdfLocator(kind="pdf", page=page))
+            for page, lines in enumerate(parsed.pages, start=1)
+            for chunk in chunk_document(lines, max_chars=settings.chunk_max_chars)
+        ]
+        parser_version = PDF_PARSER_VERSION
+    if not chunks:
+        raise ValueError("文档没有可索引的文本")
+    vectors = await embedder.embed_texts([text for text, _ in chunks])
 
     index_version = build_index_version(
-        parser_version=PARSER_VERSION,
+        parser_version=parser_version,
         chunking_config_version=chunking_config_version(settings.chunk_max_chars),
         embedding_model=embedder.model_version,
         embedding_dimension=embedder.dimension,
     )
     points = [
         ChunkPoint(
-            chunk_id=make_chunk_id(document_id, version, chunk.ordinal),
+            chunk_id=make_chunk_id(document_id, version, ordinal),
             document_id=document_id,
             version=version,
             corpus=CORPUS,
@@ -121,7 +137,7 @@ async def index_document(
             index_version=index_version,
             vector=vector,
         )
-        for chunk, vector in zip(chunks, vectors, strict=True)
+        for ordinal, (_, vector) in enumerate(zip(chunks, vectors, strict=True))
     ]
     await store.replace_document_points(
         user_id=user_id, document_id=document_id, version=version, points=points
@@ -132,7 +148,7 @@ async def index_document(
         user_id=user_id,
         corpus=CORPUS,
         chunk_count=len(points),
-        parser_version=PARSER_VERSION,
+        parser_version=parser_version,
         chunking_config_version=chunking_config_version(settings.chunk_max_chars),
         embedding_model=embedder.model_version,
         embedding_dimension=embedder.dimension,
@@ -140,12 +156,12 @@ async def index_document(
         chunks=[
             IndexedChunk(
                 chunk_id=point.chunk_id,
-                ordinal=chunk.ordinal,
-                text=chunk.text,
-                locator=chunk.locator,
+                ordinal=ordinal,
+                text=text,
+                locator=locator,
                 vector_id=point_id(point),
             )
-            for chunk, point in zip(chunks, points, strict=True)
+            for ordinal, ((text, locator), point) in enumerate(zip(chunks, points, strict=True))
         ],
         document_versions=[DocumentVersion(document_id=document_id, version=version)],
     )
