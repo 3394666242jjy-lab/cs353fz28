@@ -1,1 +1,1 @@
-"""Member C: document ingestion, retrieval and source locations."""
+"""成员 C：文档入库、证据检索与来源定位。"""
