@@ -86,3 +86,31 @@ def test_text_chunks_keep_original_indentation():
     parsed = parse_document(b"  indented\nsecond line  ")
     chunk = chunk_document(parsed.lines, max_chars=500)[0]
     assert chunk.text == "  indented\nsecond line  "
+
+
+def test_indexing_worker_uses_pdf_pages_and_saves_extracted_text(tmp_path, monkeypatch):
+    from app import worker
+    from app.rag import indexer
+    from app.services.storage import read_upload, save_upload
+
+    config = Settings(_env_file=None, app_env="test", local_storage_dir=tmp_path)
+    key = save_upload(config, "u", "resume.pdf", pdf_bytes("First page", "Second page"))
+    saved = []
+
+    class WorkerStore(Store):
+        async def ensure_collection(self):
+            pass
+
+    monkeypatch.setattr(worker, "transition_execution", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_load_vector_store", lambda: lambda settings: WorkerStore())
+    monkeypatch.setattr(indexer, "get_embedding_provider", lambda settings: Embedder())
+    monkeypatch.setattr(
+        worker,
+        "save_indexed_version",
+        lambda settings, user, doc, payload, chunks: saved.append((payload, chunks)),
+    )
+    worker.run_indexing(config, key, "u", "doc", 1, "exec")
+    assert len(saved) == 1
+    payload, chunks = saved[0]
+    assert [chunk.locator.page for chunk in chunks] == [1, 2]
+    assert read_upload(config, payload.extracted_text_key).decode() == "First page\nSecond page"
