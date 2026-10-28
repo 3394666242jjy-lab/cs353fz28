@@ -13,6 +13,7 @@ from pymongo.database import Database
 
 from app.config import Settings
 from app.schemas.analysis import AnalysisResult, DocumentVersion, Match
+from app.schemas.resources import JobResult
 from app.services.database import database_connection
 
 STATUS_PENDING = "pending"
@@ -34,8 +35,13 @@ def create_analysis(
     job_id: str,
     job_version: int,
     document_versions: list[DocumentVersion],
+    job_snapshot: JobResult | None = None,
 ) -> str:
     """Create a pending analysis pinned to the job and document versions in use."""
+    if job_snapshot is not None and (
+        job_snapshot.id != job_id or job_snapshot.version != job_version
+    ):
+        raise ValueError("Job snapshot does not match the pinned version")
     analysis_id = f"analysis_{uuid4().hex}"
     now = datetime.now(UTC)
     with database_connection(settings) as database:
@@ -46,6 +52,7 @@ def create_analysis(
                 "user_id": user_id,
                 "job_id": job_id,
                 "job_version": job_version,
+                "job_snapshot": job_snapshot.model_dump() if job_snapshot is not None else None,
                 "document_versions": [item.model_dump() for item in document_versions],
                 "requirement_snapshot": [],
                 "matches": [],
@@ -88,11 +95,16 @@ def save_analysis_result(
     with database_connection(settings) as database:
         _ensure_indexes(database)
         updated = database.analyses.update_one(
-            {"id": analysis_id, "user_id": user_id, "status": STATUS_PENDING},
+            {
+                "id": analysis_id,
+                "user_id": user_id,
+                "status": STATUS_PENDING,
+                "job_id": result.job_id,
+                "job_version": result.job_version,
+                "document_versions": [item.model_dump() for item in result.document_versions],
+            },
             {
                 "$set": {
-                    "job_version": result.job_version,
-                    "document_versions": [item.model_dump() for item in result.document_versions],
                     "requirement_snapshot": requirement_snapshot_from_matches(result.matches),
                     "matches": [match.model_dump() for match in result.matches],
                     "warnings": result.warnings,

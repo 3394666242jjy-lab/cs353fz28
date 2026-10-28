@@ -109,7 +109,7 @@ async def upload_document(
     settings: Annotated[Settings, Depends(request_settings)],
     user: Annotated[UserResult, Depends(current_user)],
 ):
-    raw = await file.read()
+    raw = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
     if not raw:
         raise HTTPException(
@@ -132,6 +132,7 @@ async def upload_document(
             },
         )
     storage_key = save_upload(settings, user.id, filename, raw)
+    document_id = None
     try:
         document_id = create_document(
             settings,
@@ -146,7 +147,20 @@ async def upload_document(
             settings, user.id, ExecutionCreate(type="index", resource_id=document_id)
         )
     except PyMongoError as exc:
-        remove_upload(settings, storage_key)
+        if document_id is None:
+            remove_upload(settings, storage_key)
+        else:
+            try:
+                if set_document_status(
+                    settings,
+                    user.id,
+                    document_id,
+                    status="failed",
+                    error="创建索引任务失败，请重试。",
+                ):
+                    remove_upload(settings, storage_key)
+            except PyMongoError:
+                pass
         raise database_unavailable() from exc
     try:
         dispatch_index_task(
@@ -305,6 +319,7 @@ def create_analysis(
             status_code=404,
             detail={"code": "RESOURCE_NOT_FOUND", "message": "岗位不存在。"},
         )
+    analysis_id = None
     try:
         document_versions: list[DocumentVersion] = []
         for document_id in payload.document_ids:
@@ -330,12 +345,20 @@ def create_analysis(
             user.id,
             job_id=job.id,
             job_version=job.version,
+            job_snapshot=job,
             document_versions=document_versions,
         )
         execution_id = create_execution(
             settings, user.id, ExecutionCreate(type="analysis", resource_id=analysis_id)
         )
     except PyMongoError as exc:
+        if analysis_id is not None:
+            try:
+                set_analysis_failed(
+                    settings, user.id, analysis_id, error="创建分析任务失败，请重试。"
+                )
+            except PyMongoError:
+                pass
         raise database_unavailable() from exc
     try:
         dispatch_analysis_task(

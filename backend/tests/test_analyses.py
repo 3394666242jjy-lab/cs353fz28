@@ -80,10 +80,17 @@ def test_save_analysis_result_only_from_pending(settings, database):
     database.analyses.update_one.return_value.matched_count = 1
     assert save_analysis_result(settings, "user_one", "analysis_1", RESULT) is True
     query = database.analyses.update_one.call_args.args[0]
-    assert query == {"id": "analysis_1", "user_id": "user_one", "status": "pending"}
+    assert query == {
+        "id": "analysis_1",
+        "user_id": "user_one",
+        "status": "pending",
+        "job_id": "job_1",
+        "job_version": 2,
+        "document_versions": [{"document_id": "doc_x", "version": 3}],
+    }
     update = database.analyses.update_one.call_args.args[1]["$set"]
     assert update["status"] == "ready"
-    assert update["job_version"] == 2
+    assert "job_version" not in update
     assert update["matches"][0]["requirement_id"] == "req_1"
     assert update["trace_id"] == "trace_1"
     assert update["retrieval_config_version"] == "retrieval-1"

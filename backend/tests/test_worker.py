@@ -181,10 +181,9 @@ def test_run_indexing_stale_execution_never_indexes(settings, tmp_path, monkeypa
     worker.run_indexing(settings, storage_key, "user_one", "doc_x", 1, "exec_1")
 
     assert loaded["called"] is False
-    assert len(calls["transitions"]) == 2
+    assert len(calls["transitions"]) == 1
     assert calls["transitions"][0][1]["status"] == "running"
-    assert calls["transitions"][1][1]["status"] == "failed"
-    assert calls["transitions"][1][1]["error"].code == "STALE_EXECUTION"
+    assert calls["statuses"] == []
 
 
 # --- analysis task (member D's agent via lazy import) ---
@@ -279,8 +278,8 @@ def test_run_analysis_missing_record_fails_without_touching_agent(monkeypatch):
     )
 
     assert loaded["called"] is False
-    assert [kwargs["status"] for _, kwargs in calls["transitions"]] == ["failed"]
-    assert calls["transitions"][0][1]["error"].code == "ANALYSIS_MISSING"
+    assert [kwargs["status"] for _, kwargs in calls["transitions"]] == ["running", "failed"]
+    assert calls["transitions"][1][1]["error"].code == "ANALYSIS_MISSING"
     assert calls["failures"] == []
 
 
@@ -292,7 +291,7 @@ def test_run_analysis_missing_job_marks_record_failed(monkeypatch):
         Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
     )
 
-    assert calls["transitions"][0][1]["error"].code == "JOB_MISSING"
+    assert calls["transitions"][1][1]["error"].code == "JOB_MISSING"
     assert calls["failures"] == [("analysis_1", {"error": "岗位不存在，无法执行分析。"})]
 
 
@@ -351,7 +350,38 @@ def test_run_analysis_stale_execution_never_loads_agent(monkeypatch):
 
     assert loaded["called"] is False
     assert calls["transitions"][0][1]["status"] == "running"
-    assert calls["transitions"][1][1]["error"].code == "STALE_EXECUTION"
+    assert len(calls["transitions"]) == 1
+
+
+def test_analysis_uses_original_job_snapshot(monkeypatch):
+    from app.schemas.resources import JobResult
+
+    snapshot = JobResult(id="job_1", title="Old title", raw_jd="Old JD", version=1)
+    row = {**ANALYSIS_ROW, "job_snapshot": snapshot.model_dump()}
+    calls = _analysis_calls(monkeypatch, row=row)
+    seen = []
+
+    class Agent:
+        async def run_analysis(self, *, job, **kwargs):
+            seen.append(job)
+            return ANALYSIS_RESULT
+
+    monkeypatch.setattr(worker, "_load_agent", lambda: Agent())
+    monkeypatch.setattr(worker, "load_job", lambda *a: pytest.fail("must use snapshot"))
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+    assert seen[0].raw_jd == "Old JD"
+    assert calls["saved"]
+
+
+def test_legacy_analysis_rejects_changed_job_version(monkeypatch):
+    calls = _analysis_calls(monkeypatch, job=SimpleNamespace(id="job_1", version=2))
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+    assert calls["transitions"][1][1]["error"].code == "JOB_VERSION_CHANGED"
+    assert calls["saved"] == []
 
 
 def test_mongo_evidence_retriever_fills_candidates_from_chunks(monkeypatch):
