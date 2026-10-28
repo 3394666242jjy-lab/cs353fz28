@@ -384,6 +384,83 @@ def test_legacy_analysis_rejects_changed_job_version(monkeypatch):
     assert calls["saved"] == []
 
 
+def test_analysis_worker_runs_real_agent_and_assembles_pdf_evidence(monkeypatch):
+    import json
+
+    from app.agent.config import AgentSettings
+    from app.agent.models import ModelCompletion
+    from app.agent.pipeline import LangGraphAnalysisAgent
+    from app.schemas.resources import DocumentResult, JobResult
+
+    job = JobResult(id="job_1", title="Developer", raw_jd="Python development", version=1)
+    row = {**ANALYSIS_ROW, "job_snapshot": job.model_dump()}
+    calls = _analysis_calls(monkeypatch, row=row)
+
+    class Model:
+        is_test_double = True
+
+        async def complete(self, *, system, payload, output_schema):
+            if output_schema.__name__ == "RequirementBatch":
+                data = {"requirements": [{"text": "Python development", "category": "required"}]}
+            else:
+                data = {
+                    "assessments": [
+                        {
+                            "requirement_id": payload["requirements"][0]["id"],
+                            "status": "supported",
+                            "evidence_ids": ["chunk_1"],
+                            "explanation": "The PDF describes Python development.",
+                            "missing_information": [],
+                        }
+                    ]
+                }
+            return ModelCompletion(content=json.dumps(data), model_version="test-model")
+
+    class CandidateSource:
+        async def retrieve_evidence(self, **kwargs):
+            return SimpleNamespace(
+                retrieval_config_version="test-retrieval",
+                evidence=[
+                    SimpleNamespace(
+                        chunk_id="chunk_1", document_id="doc_x", version=1, corpus="personal"
+                    )
+                ],
+            )
+
+    monkeypatch.setattr(
+        worker,
+        "_load_agent",
+        lambda: LangGraphAnalysisAgent(Model(), AgentSettings(_env_file=None)),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_build_retriever",
+        lambda settings: worker._MongoEvidenceRetriever(settings, CandidateSource()),
+    )
+    monkeypatch.setattr(
+        worker,
+        "list_chunks_by_ids",
+        lambda *a: [
+            {"id": "chunk_1", "text": "Python development", "locator": {"kind": "pdf", "page": 2}}
+        ],
+    )
+    monkeypatch.setattr(
+        worker,
+        "get_document",
+        lambda *a: DocumentResult(
+            id="doc_x", kind="resume", filename="resume.pdf", current_version=1, status="ready"
+        ),
+    )
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+    assert [entry[1]["status"] for entry in calls["transitions"]] == ["running", "succeeded"]
+    result = calls["saved"][0][1]
+    assert result.matches[0].status == "supported"
+    assert result.matches[0].evidence_refs[0].chunk_id == "chunk_1"
+    assert result.retrieval_config_version == "test-retrieval"
+
+
 def test_mongo_evidence_retriever_fills_candidates_from_chunks(monkeypatch):
     candidates = [
         SimpleNamespace(

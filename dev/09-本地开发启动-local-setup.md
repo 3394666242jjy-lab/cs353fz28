@@ -1,6 +1,6 @@
 # CareerPilot 本地开发启动
 
-当前版本 0.1.0。本地种子账号、登录、岗位创建查询及文档和任务状态查询已接入；前端上传与分析页面、PDF/Markdown/TXT 的 RAG 解析和 LangGraph 模块已提供。上传任务、分析 API 及真实模型全链路仍需后续分支接入与联调。
+当前版本 0.1.0。本地账号、上传、PDF/Markdown/TXT 解析、索引、分析任务和证据查询已接入；运行前需配置 MongoDB、Redis、Qdrant 和模型，并在目标环境做真实联调。
 
 ## 环境准备
 
@@ -85,7 +85,7 @@ npm run dev
 
 打开 [http://127.0.0.1:5173](http://127.0.0.1:5173)。Vite 将 /api、/health、/docs 和 /openapi.json 代理到 127.0.0.1:8000；同域请求仍由统一 API 客户端处理。若后端使用不同端口，设置根目录 .env 的 VITE_API_PROXY_TARGET 后重启前端。
 
-页面操作：资料准备 → 载入合成样例 → 查看样例分析 → 点击原文证据。选择自己的文件只显示文件名，不上传或保存；修改 JD 后固定样例结果失效，不能伪装成真实分析。实际上传、登录及分析由 A/B/C/D 后续接入。
+页面操作：先使用种子账号登录，再上传资料并等待就绪，填写岗位描述并发起分析，最后点击证据查看原文及页码或行号。也可不登录使用合成样例演练。
 
 生产预览可使用 `npm run build` 后运行 `npm run preview`。preview 仅提供静态文件，不包含开发代理；独立 API 部署时需在构建前设置公开的 VITE_API_BASE_URL，或配置反向代理。不要将服务端密钥命名为 VITE_ 开头。
 
@@ -93,13 +93,13 @@ npm run dev
 
 | 负责人 | 主要代码入口 | 仍需完成 |
 | --- | --- | --- |
-| A 前端 | frontend/src/pages、components、api/client.ts | PDF/Markdown/TXT 真实上传、登录、轮询、错误与结果页面；引用区分页码/行号；替换样例模式 |
+| A 前端 | frontend/src/pages、components、api/client.ts | 登录、上传、轮询及结果页面已接入；继续验证真实服务和交互 |
 | B 后端 | backend/app/api、services、config.py、worker.py | 鉴权、文件校验/私有存储、持久化、真实任务分发、调用 C 的 PDF/文本解析并保存结果与失败状态 |
-| C RAG | backend/app/rag/（chunking、embeddings、vector_store、indexer、retrieval） | 补齐 Python PDF 逐页解析和页内切分；与 B 约定原文查询接口，接通完整证据检索 |
+| C RAG | backend/app/rag/（chunking、embeddings、vector_store、indexer、retrieval） | PDF 逐页解析及证据检索已接入；继续评估检索质量 |
 | D Agent | backend/app/agent/pipeline.py、contracts.py | 真实生成模型、B/C 完整 Evidence 适配器与 PDF 全链路联调 |
 | 项目负责人 | 文档、schemas 评审、Compose 和发布配置 | 确认公共契约，整合模块，最终测试、ECS 部署与报告 |
 
-RAG 已实现 UTF-8 Markdown/TXT 解析、切分、Embedding、Qdrant 入库与证据候选检索，候选对应的原文及定位仍需由 B 查询权威存储后补齐；本模块使用已有 httpx 依赖。D 已加入 LangGraph 模块、隔离模型配置与明确标注的离线演示，接入说明见 [10 Agent 模块接入](10-Agent模块接入-agent-guide.md)。真实生成模型与 B/C 全链路尚待联调，API 能力开关不因此提前启用。后续依赖使用 `uv add` 加入后端并提交锁文件。
+RAG 支持文本层 PDF 与 UTF-8 Markdown/TXT，PDF 引用按页定位；证据原文由 MongoDB 提供。LangGraph 接入说明见 [10 Agent 模块接入](10-Agent模块接入-agent-guide.md)。真实模型与存储仍需在目标环境联调；后续依赖使用 `uv add` 并提交锁文件。
 
 2026-10-22 的 M1 范围调整已要求有文本层 PDF 上传和 Python 后端解析，但当前 RAG 尚未实现 PDF 解析器，真实上传链路也仍待接入。C 交付时需锁定 PDF 解析依赖，B 接入 Worker；本地验收必须上传合成多页 PDF，核对原 PDF 页码、空白页后的定位和失败状态，不能只用 Markdown 或固定样例宣布 M1 完成。详细要求见 [08 的 PDF 交付与验收](08-M1开工计划-kickoff-plan.md)。
 
@@ -124,7 +124,7 @@ RAG 已实现 UTF-8 Markdown/TXT 解析、切分、Embedding、Qdrant 入库与�
 uv run --project backend pytest backend/tests -q
 ```
 
-真实服务验证（需 `EMBEDDING_API_KEY` 与可达的 Qdrant）：执行合成样例的解析→切分→入库→检索链路，确认三个需求查询（数据库设计/缓存/Docker）的候选排序、跨用户隔离与重复入库幂等；检索结果为 chunk 元数据，quote 与 locator 由后端查 MongoDB 补齐。当前 Qdrant 指向云端集群的配置为本地 `.env` 设置，不随仓库提交。
+真实服务验证（需 `EMBEDDING_API_KEY` 与可达的 Qdrant）：执行合成样例的解析→切分→入库→检索链路，确认三个需求查询（数据库设计/缓存/Docker）的候选排序和跨用户隔离；已发布版本不可原地重建，更新资料需使用新版本；检索结果为 chunk 元数据，quote 与 locator 由后端查 MongoDB 补齐。当前 Qdrant 指向云端集群的配置为本地 `.env` 设置，不随仓库提交。
 
 ## 更新统一接口类型
 
@@ -151,7 +151,7 @@ docker compose config --quiet
 uv run --project backend python scripts/check_infra.py
 ```
 
-依赖启动较慢时可运行 `uv run --project backend python scripts/check_infra.py --attempts 20`。该脚本只检查连接，不创建业务数据、用户或索引。Worker 的诊断入口可通过 `uv run --project backend celery -A app.worker.celery_app worker --pool=solo --loglevel=info` 启动；目前只有 infrastructure_ping，不接受文档/分析任务，不写业务结果。
+依赖启动较慢时可运行 `uv run --project backend python scripts/check_infra.py --attempts 20`。该脚本只检查连接，不创建业务数据、用户或索引。Worker 可通过 `uv run --project backend celery -A app.worker.celery_app worker --pool=solo --loglevel=info` 启动，处理文档索引和分析任务；真实依赖与模型均需要配置。
 
 PR 的 Scaffold checks 工作流验证后端检查与契约、真实 Compose 依赖连接、前端类型和构建、生成契约一致性。它不部署 ECS、不访问模型或生产密钥。状态以当前 PR 的真实检查结果为准。
 

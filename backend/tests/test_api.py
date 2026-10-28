@@ -453,6 +453,36 @@ def test_create_analysis_pins_versions_and_dispatches(client, monkeypatch):
     }
 
 
+def test_create_analysis_execution_failure_marks_record_failed(client, monkeypatch):
+    from pymongo.errors import PyMongoError
+
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.load_job",
+        lambda settings, user_id, job_id: JobResult(
+            id=job_id, title="Demo", raw_jd="JD", version=1
+        ),
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: _ready_document(document_id),
+    )
+    monkeypatch.setattr("app.api.routes.analyses_create", lambda *a, **kw: "analysis_new")
+
+    def fail(*args, **kwargs):
+        raise PyMongoError("down")
+
+    monkeypatch.setattr("app.api.routes.create_execution", fail)
+    failed = []
+    monkeypatch.setattr(
+        "app.api.routes.set_analysis_failed", lambda *a, **kw: failed.append((a, kw))
+    )
+    response = client.post("/api/v1/analyses", json={"job_id": "job_1", "document_ids": ["doc_1"]})
+    assert response.status_code == 503
+    assert failed[0][0][2] == "analysis_new"
+    assert failed[0][1]["error"] == "创建分析任务失败，请重试。"
+
+
 def test_create_analysis_dispatch_failure_fails_execution_and_record(client, monkeypatch):
     _auth_as_user_one(client)
     monkeypatch.setattr(
