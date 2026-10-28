@@ -59,6 +59,15 @@ def _load_indexer() -> Any:
     return index_document
 
 
+def _load_vector_store() -> Any:
+    """Import member C's vector store factory lazily; raises when missing."""
+    try:
+        from app.rag.vector_store import get_vector_store
+    except ImportError as exc:
+        raise RuntimeError("向量库适配器（app.rag.vector_store，成员 C）尚未集成") from exc
+    return get_vector_store
+
+
 def _extract_text(raw: bytes) -> str:
     """Extract plain text via member C's parser when available.
 
@@ -149,15 +158,22 @@ def run_indexing(
         return
     try:
         index_document = _load_indexer()
-        indexed = asyncio.run(
-            index_document(
+        store = _load_vector_store()(settings_obj)
+
+        async def _run_pipeline() -> Any:
+            # C's adapter signals "call ensure_collection first"; creating the
+            # collection is B's orchestration duty, not the pipeline's.
+            await store.ensure_collection()
+            return await index_document(
                 raw,
                 user_id=user_id,
                 document_id=document_id,
                 version=version,
+                store=store,
                 settings=settings_obj,
             )
-        )
+
+        indexed = asyncio.run(_run_pipeline())
         extracted_text_key = save_extracted_text(
             settings_obj, user_id, document_id, version, _extract_text(raw)
         )

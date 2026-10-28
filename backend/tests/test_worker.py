@@ -46,13 +46,18 @@ def _successful_indexer():
 
 def _record_calls(monkeypatch):
     """Patch worker-level service boundaries with recording fakes."""
-    calls = {"transitions": [], "statuses": [], "saved_versions": []}
+    calls = {"transitions": [], "statuses": [], "saved_versions": [], "ensured": False}
+
+    class FakeStore:
+        async def ensure_collection(self):
+            calls["ensured"] = True
 
     def fake_transition(settings_obj, user_id, execution_id, **kwargs):
         calls["transitions"].append((execution_id, kwargs))
         return True
 
     monkeypatch.setattr(worker, "transition_execution", fake_transition)
+    monkeypatch.setattr(worker, "_load_vector_store", lambda *a, **k: lambda s: FakeStore())
     monkeypatch.setattr(
         worker,
         "set_document_status",
@@ -88,6 +93,9 @@ def test_run_indexing_success_persists_version_and_chunks(settings, tmp_path, mo
     assert payload.parser_version == "parser-1"
     assert payload.index_version == "index-1"
     assert [chunk.chunk_id for chunk in chunks] == ["chunk_1"]
+    # B's orchestration must ensure the vector collection exists before C's
+    # pipeline writes points (C's adapter signals "call ensure_collection").
+    assert calls["ensured"] is True
     # save_indexed_version owns the ready transition; the worker must not also
     # flip the document, and it stores real extracted text for the version key.
     assert calls["statuses"] == []
