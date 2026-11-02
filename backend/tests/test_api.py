@@ -16,7 +16,7 @@ def client():
     return TestClient(create_app(Settings(_env_file=None, app_env="test")))
 
 
-def test_liveness_and_capabilities_do_not_claim_business_is_implemented(client):
+def test_liveness_and_capabilities_describe_implemented_m1_features(client):
     response = client.get("/health/live")
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "ok"
@@ -25,11 +25,9 @@ def test_liveness_and_capabilities_do_not_claim_business_is_implemented(client):
     assert meta["mode"] == "scaffold"
     assert meta["features"]["authentication"] is True
     assert meta["features"]["job_import"] is True
-    assert all(
-        value is False
-        for key, value in meta["features"].items()
-        if key not in {"authentication", "job_import", "document_upload"}
-    )
+    assert meta["features"]["document_upload"] is True
+    assert meta["features"]["rag"] is True
+    assert meta["features"]["agent_analysis"] is True
 
 
 @pytest.mark.parametrize("all_ready", [True, False])

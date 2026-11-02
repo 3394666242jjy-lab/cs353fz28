@@ -22,6 +22,6 @@ class Capabilities(ContractModel):
         "authentication": True,
         "document_upload": True,
         "job_import": True,
-        "rag": False,
-        "agent_analysis": False,
+        "rag": True,
+        "agent_analysis": True,
     }
