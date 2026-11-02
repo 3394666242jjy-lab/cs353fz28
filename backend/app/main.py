@@ -1,3 +1,6 @@
+import logging
+from contextlib import asynccontextmanager
+from threading import Event, Thread
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -10,12 +13,36 @@ from app.api.routes import router
 from app.config import Settings, get_settings
 from app.schemas.common import Envelope, ErrorBody, ErrorDetail, ErrorEnvelope
 from app.schemas.system import Capabilities, Liveness, Readiness
+from app.services.executions import sweep_expired_executions
 from app.services.readiness import check_dependencies
+
+
+def _recovery_loop(settings: Settings, stop: Event) -> None:
+    """Run blocking recovery away from FastAPI's event loop."""
+    while not stop.wait(30):
+        try:
+            sweep_expired_executions(settings)
+        except Exception:  # noqa: BLE001 - database outage must not stop the API
+            logging.getLogger(__name__).exception("Execution recovery sweep failed")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        stop = Event()
+
+        thread = Thread(target=_recovery_loop, args=(settings, stop), daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            thread.join(timeout=1)
+
     app = FastAPI(
+        lifespan=lifespan,
         title="CareerPilot API",
         version="0.1.0",
         description=(

@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     seed_display_name: str = "Local demo"
     seed_password: SecretStr | None = None
     access_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+    execution_lease_seconds: int = Field(default=300, ge=60, le=86400)
+    execution_queue_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
 
     # 向量库（Qdrant，成员 C）：地址、凭据、集合名与调用参数。
     # 在线集群填 HTTPS 地址与 API Key；本地 compose 用 http://127.0.0.1:6333

@@ -38,7 +38,12 @@ from app.services.documents import create_document, set_document_status
 from app.services.documents import get_chunk as chunks_get
 from app.services.documents import get_document as documents_get
 from app.services.documents import list_documents as documents_list
-from app.services.executions import ExecutionCreate, create_execution, transition_execution
+from app.services.executions import (
+    ExecutionCreate,
+    create_execution,
+    recover_document_execution,
+    transition_execution,
+)
 from app.services.executions import get_execution as executions_get
 from app.services.jobs import load_job, save_job
 from app.services.storage import remove_upload, save_upload
@@ -248,6 +253,9 @@ def get_document(
 ):
     try:
         document = documents_get(settings, user.id, document_id)
+        if document is not None:
+            recover_document_execution(settings, user.id, document_id)
+            document = documents_get(settings, user.id, document_id)
     except PyMongoError as exc:
         raise database_unavailable() from exc
     if document is None:

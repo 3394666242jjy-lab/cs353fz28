@@ -7,8 +7,11 @@ dependency must fail the execution with the reason, never hang or fake success.
 """
 
 import asyncio
+import logging
+from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
 
 from celery import Celery
@@ -29,7 +32,7 @@ from app.services.documents import (
     save_indexed_version,
     set_document_status,
 )
-from app.services.executions import transition_execution
+from app.services.executions import heartbeat_execution, transition_execution
 from app.services.jobs import load_job
 from app.services.storage import read_upload, save_extracted_pages, save_extracted_text
 
@@ -104,12 +107,35 @@ def _fail(
     return transitioned
 
 
+@contextmanager
+def _heartbeat(settings_obj: Any, user_id: str, execution_id: str):
+    """Renew the worker lease while the actual Celery task is alive."""
+    stopped = Event()
+
+    def renew() -> None:
+        interval = max(1, settings_obj.execution_lease_seconds // 3)
+        while not stopped.wait(interval):
+            try:
+                heartbeat_execution(settings_obj, user_id, execution_id)
+            except Exception:  # noqa: BLE001 - transient DB outage must not kill the worker
+                logging.getLogger(__name__).exception("Could not renew execution lease")
+
+    thread = Thread(target=renew, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=1)
+
+
 @celery_app.task(name="careerpilot.index_document")
 def index_document_task(
     storage_key: str, user_id: str, document_id: str, version: int, execution_id: str
 ) -> None:
     """Index one uploaded document version and persist the outcome."""
-    run_indexing(settings, storage_key, user_id, document_id, version, execution_id)
+    with _heartbeat(settings, user_id, execution_id):
+        run_indexing(settings, storage_key, user_id, document_id, version, execution_id)
 
 
 def run_indexing(
@@ -295,7 +321,8 @@ def _build_retriever(settings_obj: Any) -> _MongoEvidenceRetriever:
 @celery_app.task(name="careerpilot.run_analysis")
 def run_analysis_task(analysis_id: str, user_id: str, execution_id: str) -> None:
     """Run one analysis and persist the outcome."""
-    run_analysis(settings, analysis_id, user_id, execution_id)
+    with _heartbeat(settings, user_id, execution_id):
+        run_analysis(settings, analysis_id, user_id, execution_id)
 
 
 def run_analysis(settings_obj: Any, analysis_id: str, user_id: str, execution_id: str) -> None:
