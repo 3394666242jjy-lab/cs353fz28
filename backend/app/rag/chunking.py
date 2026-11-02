@@ -69,8 +69,39 @@ def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocumen
             if reader.is_encrypted:
                 raise DocumentParseError("暂不支持加密 PDF，请上传可直接读取的文件")
             pages = []
-            for page in reader.pages:
-                text = (page.extract_text() or "").replace("\r\n", "\n").replace("\r", "\n")
+            for page_number, page in enumerate(reader.pages, start=1):
+                # Image-only pages are likely scanned. On text pages, identify
+                # prominent raster images using the drawing transform; small
+                # avatars/logos remain acceptable. This is a heuristic, not OCR.
+                has_images = len(page.images) > 0
+                page_area = float(page.cropbox.width) * float(page.cropbox.height)
+                large_image = False
+                resources = page.get("/Resources") or {}
+                xobjects = resources.get("/XObject") or {}
+
+                def inspect_image(
+                    operator, operands, cm, tm, *, xobjects=xobjects, page_area=page_area
+                ):
+                    nonlocal large_image
+                    is_image = operator == b"INLINE IMAGE"
+                    if operator == b"Do" and operands:
+                        obj = xobjects.get(operands[0])
+                        if obj is not None:
+                            is_image = obj.get_object().get("/Subtype") == "/Image"
+                    if is_image and page_area > 0:
+                        area = abs(float(cm[0]) * float(cm[3]) - float(cm[1]) * float(cm[2]))
+                        large_image |= area / page_area >= 0.15
+
+                text = (
+                    (page.extract_text(visitor_operand_before=inspect_image) or "")
+                    .replace("\r\n", "\n")
+                    .replace("\r", "\n")
+                )
+                if (has_images and not text.strip()) or large_image:
+                    raise DocumentParseError(
+                        f"PDF 第 {page_number} 页可能含无法提取的扫描内容；"
+                        "请检查并上传有完整文本层的 PDF"
+                    )
                 lines = text.split("\n")
                 while lines and not lines[-1].strip():
                     lines.pop()

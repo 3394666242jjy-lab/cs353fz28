@@ -131,6 +131,22 @@ async def upload_document(
                 "message": "仅支持有文本层的 PDF 或 UTF-8 TXT/Markdown 文件。",
             },
         )
+    suffix = Path(filename).suffix.lower()
+    valid_format = (
+        raw.startswith(b"%PDF-")
+        if suffix == ".pdf"
+        else not (raw.startswith((b"%PDF-", b"PK\x03\x04")) or b"\x00" in raw)
+    )
+    if suffix != ".pdf" and valid_format:
+        try:
+            raw.decode("utf-8")
+        except UnicodeDecodeError:
+            valid_format = False
+    if not valid_format:
+        raise HTTPException(
+            status_code=415,
+            detail={"code": "UNSUPPORTED_FILE_TYPE", "message": "文件内容与所选格式不符。"},
+        )
     storage_key = save_upload(settings, user.id, filename, raw)
     document_id = None
     try:

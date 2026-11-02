@@ -112,6 +112,28 @@ def test_upload_rejects_unsupported_file_type(client, monkeypatch):
     assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
 
 
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("fake.pdf", b"not a pdf"),
+        ("fake.txt", b"%PDF-1.7"),
+        ("fake.md", b"PK\x03\x04binary"),
+        ("binary.txt", b"abc\x00def"),
+        ("bad.md", b"\xff\xfe"),
+    ],
+)
+def test_upload_rejects_disguised_or_non_utf8_file(client, monkeypatch, filename, content):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.save_upload", lambda *a, **kw: pytest.fail("invalid format persisted")
+    )
+    response = client.post(
+        "/api/v1/documents", files=_multipart(content, filename), data={"kind": "resume"}
+    )
+    assert response.status_code == 415
+    assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
+
+
 def test_upload_persists_file_and_dispatches_index_task(client, tmp_path, monkeypatch):
     _auth_as_user_one(client)
     monkeypatch.setattr(client.app.state.settings, "local_storage_dir", tmp_path / "storage")

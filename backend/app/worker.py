@@ -31,7 +31,7 @@ from app.services.documents import (
 )
 from app.services.executions import transition_execution
 from app.services.jobs import load_job
-from app.services.storage import read_upload, save_extracted_text
+from app.services.storage import read_upload, save_extracted_pages, save_extracted_text
 
 LocatorAdapter: TypeAdapter[TextLocator | PdfLocator] = TypeAdapter(TextLocator | PdfLocator)
 
@@ -69,19 +69,16 @@ def _load_vector_store() -> Any:
     return get_vector_store
 
 
-def _extract_text(raw: bytes, file_type: str) -> str:
-    """Extract plain text via member C's parser when available.
+def _save_extraction(
+    settings_obj: Any, user_id: str, document_id: str, version: int, raw: bytes, file_type: str
+) -> str:
+    """Persist PDF extraction with original page numbers; text formats stay plain text."""
+    from app.rag.chunking import parse_document
 
-    TXT/Markdown uploads are already plain text, so the raw bytes are a valid
-    fallback while C's module is not merged.
-    """
-    try:
-        from app.rag.chunking import parse_document
-    except ImportError:
-        if file_type == ".pdf":
-            raise RuntimeError("PDF 解析模块尚未集成") from None
-        return raw.decode("utf-8")
-    return parse_document(raw, file_type=file_type).text
+    parsed = parse_document(raw, file_type=file_type)
+    if parsed.pages is not None:
+        return save_extracted_pages(settings_obj, user_id, document_id, version, parsed.pages)
+    return save_extracted_text(settings_obj, user_id, document_id, version, parsed.text)
 
 
 def _fail(
@@ -171,12 +168,8 @@ def run_indexing(
             )
 
         indexed = asyncio.run(_run_pipeline())
-        extracted_text_key = save_extracted_text(
-            settings_obj,
-            user_id,
-            document_id,
-            version,
-            _extract_text(raw, Path(storage_key).suffix.lower()),
+        extracted_text_key = _save_extraction(
+            settings_obj, user_id, document_id, version, raw, Path(storage_key).suffix.lower()
         )
         save_indexed_version(
             settings_obj,
