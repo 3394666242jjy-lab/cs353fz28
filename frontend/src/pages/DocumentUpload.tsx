@@ -21,10 +21,12 @@ interface DocumentUploadProps {
   userId?: string;
 }
 
+const MAX_DOCUMENTS = 20;
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MiB
 const ALLOWED = ['.pdf', '.md', '.txt'];
 const POLL_INTERVAL_MS = 1500;
 const STORAGE_KEY = 'careerpilot.pending_documents';
+const SELECTED_KEY = 'careerpilot.selected_documents';
 
 const statusLabels = {
   processing: '处理中',
@@ -54,6 +56,20 @@ function readSavedItems(): UploadItem[] {
   }
 }
 
+function readSelectedIds(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(sessionStorage.getItem(SELECTED_KEY) ?? '[]');
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.filter((id): id is string => typeof id === 'string'))].slice(
+          0,
+          MAX_DOCUMENTS,
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function mergeItems(prev: UploadItem[], updates: UploadItem[]): UploadItem[] {
   const map = new Map(updates.map((item) => [item.key, item]));
   return prev.map((item) => map.get(item.key) ?? item);
@@ -62,7 +78,8 @@ function mergeItems(prev: UploadItem[], updates: UploadItem[]): UploadItem[] {
 export default function DocumentUpload({ onReadyChange, userId }: DocumentUploadProps) {
   const [kind, setKind] = useState<Kind>('resume');
   const [file, setFile] = useState<File | null>(null);
-  const [items, setItems] = useState<UploadItem[]>(() => readSavedItems());
+  const [items, setItems] = useState<UploadItem[]>(() => (userId ? readSavedItems() : []));
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => (userId ? readSelectedIds() : []));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -130,10 +147,24 @@ export default function DocumentUpload({ onReadyChange, userId }: DocumentUpload
   }, [userId]);
 
   useEffect(() => {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    const ready = items.filter((item) => item.status === 'ready').map((item) => item.documentId);
-    onReadyChangeRef.current?.(ready);
+    const failedIds = new Set(
+      items.filter((item) => item.status === 'failed').map((item) => item.documentId),
+    );
+    if (failedIds.size) setSelectedIds((prev) => prev.filter((id) => !failedIds.has(id)));
   }, [items]);
+
+  useEffect(() => {
+    if (!userId) {
+      onReadyChangeRef.current?.([]);
+      return;
+    }
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    sessionStorage.setItem(SELECTED_KEY, JSON.stringify(selectedIds));
+    const ready = items
+      .filter((item) => item.status === 'ready' && selectedIds.includes(item.documentId))
+      .map((item) => item.documentId);
+    onReadyChangeRef.current?.(ready);
+  }, [items, selectedIds, userId]);
 
   function stopPolling() {
     if (timerRef.current != null) {
@@ -204,6 +235,10 @@ export default function DocumentUpload({ onReadyChange, userId }: DocumentUpload
         createdAt: Date.now(),
       };
       setItems((prev) => [item, ...prev]);
+      setSelectedIds((prev) => (prev.length < MAX_DOCUMENTS ? [...prev, item.documentId] : prev));
+      if (selectedIds.length >= MAX_DOCUMENTS) {
+        setError(`资料已上传，但本次分析最多选择 ${MAX_DOCUMENTS} 份。请取消其他选择后手动选择。`);
+      }
       if (inputRef.current) inputRef.current.value = '';
       setFile(null);
     } catch (err) {
@@ -211,6 +246,14 @@ export default function DocumentUpload({ onReadyChange, userId }: DocumentUpload
     } finally {
       setBusy(false);
     }
+  }
+
+  function toggleSelection(id: string) {
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((selected) => selected !== id);
+      if (prev.length >= MAX_DOCUMENTS) return prev;
+      return [...prev, id];
+    });
   }
 
   return (
@@ -267,16 +310,35 @@ export default function DocumentUpload({ onReadyChange, userId }: DocumentUpload
       )}
 
       {items.length > 0 && (
-        <ul className="upload-list">
-          {items.map((item) => (
-            <li key={item.key}>
-              <span className="file-type">{extOf(item.filename)}</span>
-              <span className="upload-name">{item.filename}</span>
-              <StatusBadge label={statusLabels[item.status]} tone={statusTones[item.status]} />
-              {item.error && <span className="muted small">{item.error}</span>}
-            </li>
-          ))}
-        </ul>
+        <>
+          <p className="small muted" id="document-selection-hint" aria-live="polite">
+            选择本次分析使用的资料：已选 {selectedIds.length} / {MAX_DOCUMENTS}{' '}
+            份；新上传的资料会自动选中。
+          </p>
+          <ul className="upload-list">
+            {items.map((item) => (
+              <li key={item.key}>
+                <label className="document-choice">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(item.documentId)}
+                    disabled={
+                      item.status === 'failed' ||
+                      (!selectedIds.includes(item.documentId) &&
+                        selectedIds.length >= MAX_DOCUMENTS)
+                    }
+                    onChange={() => toggleSelection(item.documentId)}
+                    aria-describedby="document-selection-hint"
+                  />
+                  <span className="file-type">{extOf(item.filename)}</span>
+                  <span className="upload-name">{item.filename}</span>
+                </label>
+                <StatusBadge label={statusLabels[item.status]} tone={statusTones[item.status]} />
+                {item.error && <span className="muted small">{item.error}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );

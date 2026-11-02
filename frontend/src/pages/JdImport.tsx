@@ -229,7 +229,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     if (ids.length === 0) {
       setError({
         code: 'NO_DOCUMENTS',
-        message: '还没有已就绪的资料：请先登录并在「资料准备」上传资料，或点「样例演练」查看交互。',
+        message: '请先在「资料准备」选择已就绪的资料，或点「样例演练」查看交互。',
       });
       return;
     }
@@ -376,7 +376,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
       </div>
 
       <p className="small muted">
-        真实分析根据已上传的资料查找证据；样例演练使用合成数据，不访问后端。
+        真实分析使用本次选中的 {documentIds.length} 份已就绪资料（最多 20 份）；样例演练不访问后端。
       </p>
 
       <div className="form-actions">

@@ -862,3 +862,19 @@ blockquote {
 .session-panel .error-box {
   margin-top: 12px;
 }
+
+.document-choice {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 32px;
+  cursor: pointer;
+}
+.document-choice input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  accent-color: var(--accent);
+}

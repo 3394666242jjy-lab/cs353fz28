@@ -10,19 +10,6 @@ import JdImport from './pages/JdImport';
 const steps = ['资料准备', '目标岗位', '匹配分析'];
 type Connection = 'checking' | 'connected' | 'disconnected';
 
-function readReadyDocuments(): string[] {
-  try {
-    const items = JSON.parse(sessionStorage.getItem('careerpilot.pending_documents') ?? '[]');
-    return Array.isArray(items)
-      ? items
-          .filter((item) => item.status === 'ready' && typeof item.documentId === 'string')
-          .map((item) => item.documentId)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
 function readPendingJob(): { title: string; jd: string } | null {
   try {
     const saved = JSON.parse(sessionStorage.getItem('careerpilot.pending_analysis') ?? 'null');
@@ -43,7 +30,7 @@ export default function App() {
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [hasRealAnalysis, setHasRealAnalysis] = useState(false);
-  const [documentIds, setDocumentIds] = useState<string[]>(readReadyDocuments);
+  const [documentIds, setDocumentIds] = useState<string[]>([]);
   const [title, setTitle] = useState(() => readPendingJob()?.title ?? '后端开发实习生');
   const [jd, setJd] = useState(() => readPendingJob()?.jd ?? '');
   const [user, setUser] = useState<UserResult | null>(null);
@@ -54,6 +41,7 @@ export default function App() {
 
   function clearSessionData() {
     sessionStorage.removeItem('careerpilot.pending_documents');
+    sessionStorage.removeItem('careerpilot.selected_documents');
     sessionStorage.removeItem('careerpilot.pending_analysis');
     sessionStorage.removeItem('careerpilot.owner');
     setDocumentIds([]);
