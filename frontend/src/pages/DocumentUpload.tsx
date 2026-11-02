@@ -300,7 +300,7 @@ export default function DocumentUpload({ onReadyChange, userId }: DocumentUpload
         </button>
       </div>
       <p id="upload-hint" className="small muted">
-        支持 .pdf / .md / .txt，单文件 ≤ 10 MiB；PDF 需要有文本层。
+        支持 .pdf / .md / .txt，单文件 ≤ 10 MiB；PDF 文字需要可复制，扫描图片中的文字无法识别。
       </p>
       {file && <p className="small">已选择 {file.name}</p>}
       {error && (

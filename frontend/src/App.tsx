@@ -10,6 +10,28 @@ import JdImport from './pages/JdImport';
 const steps = ['资料准备', '目标岗位', '匹配分析'];
 type Connection = 'checking' | 'connected' | 'disconnected';
 
+function readSelectedReadyDocuments(): string[] {
+  try {
+    const selected: unknown = JSON.parse(
+      sessionStorage.getItem('careerpilot.selected_documents') ?? '[]',
+    );
+    const items: unknown = JSON.parse(
+      sessionStorage.getItem('careerpilot.pending_documents') ?? '[]',
+    );
+    if (!Array.isArray(selected) || !Array.isArray(items)) return [];
+    const ready = new Set(
+      items
+        .filter((item) => item && item.status === 'ready' && typeof item.documentId === 'string')
+        .map((item) => item.documentId),
+    );
+    return [
+      ...new Set(selected.filter((id): id is string => typeof id === 'string' && ready.has(id))),
+    ].slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
 function readPendingJob(): { title: string; jd: string } | null {
   try {
     const saved = JSON.parse(sessionStorage.getItem('careerpilot.pending_analysis') ?? 'null');
@@ -51,7 +73,11 @@ export default function App() {
   }
 
   function acceptUser(current: UserResult) {
-    if (sessionStorage.getItem('careerpilot.owner') !== current.id) clearSessionData();
+    if (sessionStorage.getItem('careerpilot.owner') !== current.id) {
+      clearSessionData();
+    } else {
+      setDocumentIds(readSelectedReadyDocuments());
+    }
     sessionStorage.setItem('careerpilot.owner', current.id);
     setUser(current);
   }
@@ -443,16 +469,18 @@ export default function App() {
           className="panel"
           hidden={step === 0 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
         >
-          <JdImport
-            key={user?.id ?? 'anonymous'}
-            jd={jd}
-            title={title}
-            documentIds={documentIds}
-            onAnalysis={(result) => {
-              setHasRealAnalysis(result !== null);
-              if (result) setAnalysisVisible(false);
-            }}
-          />
+          {(!hasAuthToken() || user) && (
+            <JdImport
+              key={user?.id ?? 'anonymous'}
+              jd={jd}
+              title={title}
+              documentIds={documentIds}
+              onAnalysis={(result) => {
+                setHasRealAnalysis(result !== null);
+                if (result) setAnalysisVisible(false);
+              }}
+            />
+          )}
         </div>
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>
