@@ -10,7 +10,9 @@ permissions:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    # MongoDB 8.0 cannot start on Linux kernels 6.19 through 7.0.13.
+    # Revisit this temporary pin when the newer runner has a compatible kernel.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
