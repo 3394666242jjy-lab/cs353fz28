@@ -340,7 +340,11 @@ export default function App() {
                 <p className="muted">
                   M1 支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。
                 </p>
-                <DocumentUpload key={user?.id ?? 'anonymous'} onReadyChange={setDocumentIds} />
+                <DocumentUpload
+                  key={user?.id ?? 'anonymous'}
+                  userId={user?.id}
+                  onReadyChange={setDocumentIds}
+                />
               </div>
               <div className="panel sample-panel">
                 <span className="eyebrow">无需个人资料</span>

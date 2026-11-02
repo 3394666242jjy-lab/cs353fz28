@@ -123,12 +123,6 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
       if (startedAt == null) return;
       const seconds = Math.floor((Date.now() - startedAt) / 1000);
       setElapsed(seconds);
-      if (phase === 'polling' && seconds * 1000 > POLL_TIMEOUT_MS) {
-        fail({
-          code: 'TOOL_TIMEOUT',
-          message: `分析超时（超过 ${POLL_TIMEOUT_MS / 1000} 秒），可稍后重试或检查 Worker。`,
-        });
-      }
     }, 1000);
     return () => window.clearInterval(ticker);
   }, [phase, startedAt]);
@@ -157,6 +151,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
         const res = await api.getExecution(executionId, controller.signal);
         if (!mountedRef.current || controller.signal.aborted) return;
         const exec = res.data;
+        setError(null);
         setExecution(exec);
         if (exec.status === 'succeeded') {
           stopTimers();
@@ -171,7 +166,10 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
         }
       } catch (err) {
         if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
-        fail(describeError(err));
+        setError({
+          code: 'POLL_RETRY',
+          message: `暂时无法查询任务状态，将继续重试：${describeError(err).message}`,
+        });
       }
     };
     void tick();
@@ -414,6 +412,11 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
             </span>
           )}
         </div>
+        {running && elapsed * 1000 > POLL_TIMEOUT_MS && (
+          <p className="muted small">
+            等待时间较长，任务可能仍在排队或执行；可以检查 Worker 和依赖服务。
+          </p>
+        )}
         {running && (
           <progress
             max={POLL_TIMEOUT_MS / 1000}

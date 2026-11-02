@@ -18,12 +18,12 @@ interface UploadItem {
 interface DocumentUploadProps {
   /** 就绪资料的 document_id 列表变化时回调，供父组件传给分析流程。 */
   onReadyChange?: (readyIds: string[]) => void;
+  userId?: string;
 }
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MiB
 const ALLOWED = ['.pdf', '.md', '.txt'];
 const POLL_INTERVAL_MS = 1500;
-const POLL_TIMEOUT_MS = 120_000;
 const STORAGE_KEY = 'careerpilot.pending_documents';
 
 const statusLabels = {
@@ -59,7 +59,7 @@ function mergeItems(prev: UploadItem[], updates: UploadItem[]): UploadItem[] {
   return prev.map((item) => map.get(item.key) ?? item);
 }
 
-export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
+export default function DocumentUpload({ onReadyChange, userId }: DocumentUploadProps) {
   const [kind, setKind] = useState<Kind>('resume');
   const [file, setFile] = useState<File | null>(null);
   const [items, setItems] = useState<UploadItem[]>(() => readSavedItems());
@@ -88,6 +88,48 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
   }, []);
 
   useEffect(() => {
+    if (!userId) return;
+    const controller = new AbortController();
+    async function loadDocuments() {
+      try {
+        const all: UploadItem[] = [];
+        let cursor: string | undefined;
+        do {
+          const response = await api.listDocuments(cursor, controller.signal);
+          for (const doc of response.data.items) {
+            if (doc.status === 'deleted') continue;
+            all.push({
+              key: `${doc.kind}-${doc.id}`,
+              documentId: doc.id,
+              kind: doc.kind,
+              filename: doc.filename,
+              status:
+                doc.status === 'ready'
+                  ? 'ready'
+                  : doc.status === 'failed'
+                    ? 'failed'
+                    : 'processing',
+              error: doc.error ?? undefined,
+              createdAt: Date.now(),
+            });
+          }
+          cursor = response.data.next_cursor ?? undefined;
+        } while (cursor);
+        if (!controller.signal.aborted) {
+          setItems((prev) => {
+            const ids = new Set(all.map((item) => item.documentId));
+            return [...prev.filter((item) => !ids.has(item.documentId)), ...all];
+          });
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setError(`加载已有资料失败：${describeError(err).message}`);
+      }
+    }
+    void loadDocuments();
+    return () => controller.abort();
+  }, [userId]);
+
+  useEffect(() => {
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
     const ready = items.filter((item) => item.status === 'ready').map((item) => item.documentId);
     onReadyChangeRef.current?.(ready);
@@ -110,13 +152,8 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
   async function tick() {
     const processing = itemsRef.current.filter((item) => item.status === 'processing');
     if (processing.length === 0) return;
-    const now = Date.now();
     const updates: UploadItem[] = [];
     for (const item of processing) {
-      if (now - item.createdAt > POLL_TIMEOUT_MS) {
-        updates.push({ ...item, status: 'failed', error: '处理超时，请稍后重试。' });
-        continue;
-      }
       try {
         const res = await api.getDocument(item.documentId);
         const doc = res.data;
@@ -127,7 +164,7 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
         }
       } catch (err) {
         if (isAbortError(err)) continue;
-        updates.push({ ...item, status: 'failed', error: describeError(err).message });
+        updates.push({ ...item, error: `暂时无法查询，将继续重试：${describeError(err).message}` });
       }
     }
     if (updates.length > 0) {

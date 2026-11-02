@@ -14,6 +14,7 @@ type AnalysisResult = components['schemas']['AnalysisResult'];
 type Evidence = components['schemas']['Evidence'];
 type DocumentAccepted = components['schemas']['DocumentAccepted'];
 type DocumentResult = components['schemas']['DocumentResult'];
+type DocumentPage = components['schemas']['DocumentPage'];
 type LoginRequest = components['schemas']['LoginRequest'];
 type TokenResult = components['schemas']['TokenResult'];
 export type UserResult = components['schemas']['UserResult'];
@@ -112,6 +113,12 @@ export const api = {
     form.append('kind', kind);
     return request<DocumentAccepted>('POST', '/api/v1/documents', { form, signal });
   },
+  listDocuments: (cursor?: string, signal?: AbortSignal) =>
+    request<DocumentPage>(
+      'GET',
+      `/api/v1/documents?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      { signal },
+    ),
   getDocument: (id: string, signal?: AbortSignal) =>
     request<DocumentResult>('GET', `/api/v1/documents/${encodeURIComponent(id)}`, { signal }),
   createJob: (body: JobCreate, signal?: AbortSignal) =>
