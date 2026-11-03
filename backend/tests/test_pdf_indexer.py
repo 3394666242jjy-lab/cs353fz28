@@ -71,7 +71,7 @@ def test_multi_page_pdf_is_indexed_with_page_locators():
         "Second page projects",
     ]
     assert len({chunk.chunk_id for chunk in result.chunks}) == 2
-    assert result.parser_version == "pypdf-text-pages-v1"
+    assert result.parser_version == "pypdf-text-pages-v2"
 
 
 def test_pdf_without_text_and_encrypted_pdf_are_rejected():
@@ -168,12 +168,76 @@ def pdf_with_image(*, image_size, with_text):
     return output.getvalue()
 
 
-def test_scan_page_and_large_mixed_image_are_rejected_but_avatar_allowed():
-    with pytest.raises(DocumentParseError, match="扫描内容"):
+def test_scan_page_and_mixed_images_fail_closed_even_when_small():
+    with pytest.raises(DocumentParseError, match="图形内容"):
         parse_document(pdf_with_image(image_size=50, with_text=False), file_type=".pdf")
-    with pytest.raises(DocumentParseError, match="扫描内容"):
+    with pytest.raises(DocumentParseError, match="图形内容"):
         parse_document(pdf_with_image(image_size=300, with_text=True), file_type=".pdf")
-    assert (
-        "Experience"
-        in parse_document(pdf_with_image(image_size=50, with_text=True), file_type=".pdf").text
+    with pytest.raises(DocumentParseError, match="图形内容"):
+        parse_document(pdf_with_image(image_size=5, with_text=True), file_type=".pdf")
+
+
+def test_vector_outline_mixed_with_extractable_text_is_rejected():
+    writer = PdfWriter()
+    writer.append(BytesIO(pdf_bytes("Experience")))
+    page = writer.pages[0]
+    stream = DecodedStreamObject()
+    stream.set_data(b"BT /F1 12 Tf 72 720 Td (Experience) Tj ET 0 0 10 10 re f")
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    output = BytesIO()
+    writer.write(output)
+    with pytest.raises(DocumentParseError, match="图形内容"):
+        parse_document(output.getvalue(), file_type=".pdf")
+
+
+def test_graphic_hidden_in_nested_form_is_rejected():
+    writer = PdfWriter()
+    writer.append(BytesIO(pdf_bytes("Experience")))
+    page = writer.pages[0]
+    image = DecodedStreamObject()
+    image.set_data(bytes([0, 0, 0]))
+    image.update(
+        {NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Image")}
     )
+    form = DecodedStreamObject()
+    form.set_data(b"q 5 0 0 5 0 0 cm /Im1 Do Q")
+    form.update(
+        {
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Form"),
+            NameObject("/Resources"): DictionaryObject(
+                {
+                    NameObject("/XObject"): DictionaryObject(
+                        {NameObject("/Im1"): writer._add_object(image)}
+                    )
+                }
+            ),
+        }
+    )
+    page["/Resources"][NameObject("/XObject")] = DictionaryObject(
+        {NameObject("/Fm1"): writer._add_object(form)}
+    )
+    content = DecodedStreamObject()
+    content.set_data(b"BT /F1 12 Tf 72 720 Td (Experience) Tj ET /Fm1 Do")
+    page[NameObject("/Contents")] = writer._add_object(content)
+    out = BytesIO()
+    writer.write(out)
+    with pytest.raises(DocumentParseError, match="图形内容"):
+        parse_document(out.getvalue(), file_type=".pdf")
+
+
+def test_text_and_blank_pages_preserve_page_numbers():
+    parsed = parse_document(pdf_bytes("First", "", "Third"), file_type=".pdf")
+    assert parsed.pages == [["First"], [], ["Third"]]
+
+
+def test_unknown_drawing_operator_fails_closed():
+    writer = PdfWriter()
+    writer.append(BytesIO(pdf_bytes("Experience")))
+    content = DecodedStreamObject()
+    content.set_data(b"BT /F1 12 Tf 72 720 Td (Experience) Tj ET 0 0 FutureOperator")
+    writer.pages[0][NameObject("/Contents")] = writer._add_object(content)
+    out = BytesIO()
+    writer.write(out)
+    with pytest.raises(DocumentParseError, match="图形内容"):
+        parse_document(out.getvalue(), file_type=".pdf")
