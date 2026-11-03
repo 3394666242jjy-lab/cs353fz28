@@ -159,7 +159,8 @@ textarea:focus-visible {
 
 .main-content {
   padding: 28px clamp(24px, 4vw, 68px) 40px;
-  max-width: 1480px;
+  max-width: 1680px;
+  margin-inline: auto;
 }
 
 .topbar {
