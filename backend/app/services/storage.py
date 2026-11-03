@@ -6,6 +6,7 @@ later without touching the collections. All keys are validated to stay inside
 the storage root before any read or write.
 """
 
+import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -69,4 +70,16 @@ def save_extracted_text(
     path = _resolve(settings, storage_key)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
+    return storage_key
+
+
+def save_extracted_pages(
+    settings: Settings, user_id: str, document_id: str, version: int, pages: list[list[str]]
+) -> str:
+    """Persist each PDF page including blank pages and original 1-based page numbers."""
+    storage_key = f"extracted/{user_id}/{document_id}/v{version}.json"
+    path = _resolve(settings, storage_key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"pages": [{"page": i, "text": "\n".join(lines)} for i, lines in enumerate(pages, 1)]}
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8", newline="\n")
     return storage_key

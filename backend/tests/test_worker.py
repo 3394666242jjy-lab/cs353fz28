@@ -134,8 +134,57 @@ def test_run_indexing_pipeline_error_fails_execution(settings, tmp_path, monkeyp
     assert [kwargs["status"] for _, kwargs in calls["transitions"]] == ["running", "failed"]
     error = calls["transitions"][1][1]["error"]
     assert error.code == "INDEXING_FAILED"
-    assert "bad pdf" in error.message
+    assert error.message == "文档处理失败，请稍后重试或联系管理员。"
     assert calls["statuses"][0][1]["status"] == "failed"
+
+
+def test_indexing_never_exposes_provider_body_or_unexpected_exception(settings, monkeypatch):
+    from app.rag.embeddings import EmbeddingError
+
+    for exception in (
+        RuntimeError("secret-credential /private/resume.pdf"),
+        EmbeddingError("provider echoed secret-credential", retryable=False),
+    ):
+        calls = _record_calls(monkeypatch)
+
+        async def broken(raw, *, error=exception, **kwargs):
+            raise error
+
+        monkeypatch.setattr(worker, "_load_indexer", lambda: broken)
+        key = save_upload(settings, "user_one", "resume.txt", b"resume")
+        worker.run_indexing(settings, key, "user_one", "doc_x", 1, "exec_1")
+        message = calls["transitions"][-1][1]["error"].message
+        assert "secret-credential" not in message
+        assert "/private/resume.pdf" not in message
+        assert calls["statuses"][-1][1]["error"] == message
+
+
+def test_pdf_failure_reason_remains_actionable_without_echoing_unknown_text(settings, monkeypatch):
+    from app.rag.chunking import DocumentParseError
+
+    calls = _record_calls(monkeypatch)
+
+    async def broken(raw, **kwargs):
+        raise DocumentParseError("暂不支持加密 PDF，请上传可直接读取的文件")
+
+    monkeypatch.setattr(worker, "_load_indexer", lambda: broken)
+    key = save_upload(settings, "user_one", "resume.pdf", b"%PDF-broken")
+    worker.run_indexing(settings, key, "user_one", "doc_x", 1, "exec_1")
+    assert "加密 PDF" in calls["transitions"][-1][1]["error"].message
+    assert "secret" not in worker._public_index_error(DocumentParseError("secret"))
+
+
+def test_known_pdf_page_diagnostic_does_not_echo_untrusted_text():
+    from app.rag.chunking import DocumentParseError
+
+    current = "PDF 第 3 页可能含无法提取的扫描内容；请检查并上传有完整文本层的 PDF"
+    strict = (
+        "PDF 第 4 页含无法核验的图形内容（含图片、头像或矢量图）；"
+        "请上传仅含可复制文字的 PDF，或使用 UTF-8 TXT/Markdown"
+    )
+    assert "第 3 页" in worker._public_index_error(DocumentParseError(current))
+    assert "第 4 页" in worker._public_index_error(DocumentParseError(strict))
+    assert "secret" not in worker._public_index_error(DocumentParseError(current + " secret"))
 
 
 def test_run_indexing_fails_explicitly_when_rag_module_missing(settings, tmp_path, monkeypatch):
@@ -152,7 +201,7 @@ def test_run_indexing_fails_explicitly_when_rag_module_missing(settings, tmp_pat
     error = calls["transitions"][1][1]["error"]
     assert calls["transitions"][1][1]["status"] == "failed"
     assert error.code == "INDEXING_FAILED"
-    assert "尚未集成" in error.message
+    assert error.message == "文档处理失败，请稍后重试或联系管理员。"
 
 
 def test_run_indexing_stale_execution_never_indexes(settings, tmp_path, monkeypatch):
@@ -310,8 +359,26 @@ def test_run_analysis_agent_error_fails_execution_and_record(monkeypatch):
     assert [kwargs["status"] for _, kwargs in calls["transitions"]] == ["running", "failed"]
     error = calls["transitions"][1][1]["error"]
     assert error.code == "ANALYSIS_FAILED"
-    assert "LLM provider unreachable" in error.message
+    assert error.message == "分析执行失败，请稍后重试或联系管理员。"
     assert calls["failures"][0][1]["error"] == error.message
+
+
+def test_analysis_maps_model_error_code_without_exposing_exception_text(monkeypatch):
+    from app.agent.errors import AgentError
+
+    calls = _analysis_calls(monkeypatch)
+
+    def raising_agent():
+        raise AgentError("MODEL_AUTH_FAILED", "secret-credential from provider")
+
+    monkeypatch.setattr(worker, "_load_agent", raising_agent)
+    worker.run_analysis(
+        Settings(_env_file=None, app_env="test"), "analysis_1", "user_one", "exec_1"
+    )
+    message = calls["transitions"][-1][1]["error"].message
+    assert "认证失败" in message
+    assert "secret-credential" not in message
+    assert calls["failures"][-1][1]["error"] == message
 
 
 def test_run_analysis_fails_explicitly_when_agent_module_missing(monkeypatch):
@@ -328,7 +395,7 @@ def test_run_analysis_fails_explicitly_when_agent_module_missing(monkeypatch):
 
     error = calls["transitions"][1][1]["error"]
     assert error.code == "ANALYSIS_FAILED"
-    assert "尚未集成" in error.message
+    assert error.message == "分析执行失败，请稍后重试或联系管理员。"
 
 
 def test_run_analysis_stale_execution_never_loads_agent(monkeypatch):

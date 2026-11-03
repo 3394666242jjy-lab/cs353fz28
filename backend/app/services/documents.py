@@ -208,6 +208,8 @@ def save_indexed_version(
         )
         if document is None:
             raise ValueError("Document does not exist or is not accessible")
+        if document.get("status") not in {"uploaded", "ready"}:
+            raise ValueError("Document is no longer eligible for indexing")
         # The unique (document_id, version) index makes this an atomic claim:
         # a published or already-writing version cannot be claimed again.
         database.document_versions.update_one(
@@ -286,7 +288,12 @@ def save_indexed_version(
         if published.matched_count != 1:
             raise RuntimeError("Document version changed while it was being written")
         current = database.documents.update_one(
-            {"id": document_id, "user_id": user_id, "deleted_at": None},
+            {
+                "id": document_id,
+                "user_id": user_id,
+                "deleted_at": None,
+                "status": {"$in": ["uploaded", "ready"]},
+            },
             {
                 "$set": {
                     "current_version": version,

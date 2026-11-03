@@ -21,13 +21,14 @@ from io import BytesIO
 from pydantic import Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
+from pypdf.generic import ContentStream
 
 from app.schemas.analysis import TextLocator
 from app.schemas.common import ContractModel
 
 # 解析器版本：解析规则变化时升级，并随索引进 document_versions.parser_version 留档。
 PARSER_VERSION = "text-utf8-lf-v1"
-PDF_PARSER_VERSION = "pypdf-text-pages-v1"
+PDF_PARSER_VERSION = "pypdf-text-pages-v2"
 
 # Markdown ATX 标题行（允许前置空格），用于识别小节边界；非标题的 # 文本不受影响。
 HEADING_PATTERN = re.compile(r"^ {0,3}#{1,6} ")
@@ -57,6 +58,115 @@ class DocumentChunk(ContractModel):
     locator: TextLocator
 
 
+def _reject_graphic_content(page, reader, page_number: int) -> None:
+    """Fail closed on graphics that could contain unextractable text.
+
+    This intentionally rejects decorative graphics too: without OCR or a
+    user comparing the entire extraction we cannot distinguish them safely.
+    Nested Form XObjects are inspected recursively, including text-only forms.
+    """
+    allowed = {
+        b"q",
+        b"Q",
+        b"cm",
+        b"w",
+        b"J",
+        b"j",
+        b"M",
+        b"d",
+        b"ri",
+        b"i",
+        b"m",
+        b"l",
+        b"c",
+        b"v",
+        b"y",
+        b"h",
+        b"re",
+        b"W",
+        b"W*",
+        b"n",
+        b"BT",
+        b"ET",
+        b"Tc",
+        b"Tw",
+        b"Tz",
+        b"TL",
+        b"Tf",
+        b"Tr",
+        b"Ts",
+        b"Td",
+        b"TD",
+        b"Tm",
+        b"T*",
+        b"Tj",
+        b"TJ",
+        b"'",
+        b'"',
+        b"CS",
+        b"cs",
+        b"SC",
+        b"SCN",
+        b"sc",
+        b"scn",
+        b"G",
+        b"g",
+        b"RG",
+        b"rg",
+        b"K",
+        b"k",
+        b"BMC",
+        b"BDC",
+        b"EMC",
+        b"MP",
+        b"DP",
+        b"BX",
+        b"EX",
+        b"Do",
+    }
+
+    def reject():
+        raise DocumentParseError(
+            f"PDF 第 {page_number} 页含无法核验的图形内容（含图片、头像或矢量图）；"
+            "请上传仅含可复制文字的 PDF，或使用 UTF-8 TXT/Markdown"
+        )
+
+    if page.get("/Annots"):
+        reject()
+
+    def resolve(obj):
+        return obj.get_object() if hasattr(obj, "get_object") else obj
+
+    def inspect(stream, resources, ancestors):
+        if stream is None:
+            return
+        if len(ancestors) > 32:
+            reject()
+        fonts = resolve(resources.get("/Font") or {})
+        if not isinstance(fonts, dict):
+            reject()
+        for font in fonts.values():
+            if resolve(font).get("/Subtype") == "/Type3":
+                reject()
+        for operands, op in ContentStream(stream, reader).operations:
+            if op not in allowed:
+                reject()
+            if op != b"Do":
+                continue
+            resource = resolve(resources.get("/XObject") or {})
+            target = resource.get(operands[0]) if operands else None
+            if target is None:
+                reject()
+            target = target.get_object()
+            if target.get("/Subtype") != "/Form" or id(target) in ancestors:
+                reject()
+            inspect(
+                target, resolve(target.get("/Resources") or resources), ancestors | {id(target)}
+            )
+
+    inspect(page.get_contents(), resolve(page.get("/Resources") or {}), set())
+
+
 def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocument:
     """把上传字节解码为归一化文本与 1 起始行号。
 
@@ -65,11 +175,12 @@ def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocumen
     """
     if file_type == ".pdf" or (file_type is None and raw.startswith(b"%PDF-")):
         try:
-            reader = PdfReader(BytesIO(raw))
+            reader = PdfReader(BytesIO(raw), strict=True)
             if reader.is_encrypted:
                 raise DocumentParseError("暂不支持加密 PDF，请上传可直接读取的文件")
             pages = []
-            for page in reader.pages:
+            for page_number, page in enumerate(reader.pages, start=1):
+                _reject_graphic_content(page, reader, page_number)
                 text = (page.extract_text() or "").replace("\r\n", "\n").replace("\r", "\n")
                 lines = text.split("\n")
                 while lines and not lines[-1].strip():
@@ -77,7 +188,17 @@ def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocumen
                 pages.append(lines)
         except DocumentParseError:
             raise
-        except (PdfReadError, ValueError, OSError, UnicodeError, KeyError) as error:
+        except (
+            PdfReadError,
+            ValueError,
+            OSError,
+            UnicodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            RecursionError,
+            OverflowError,
+        ) as error:
             raise DocumentParseError("PDF 文件损坏或无法解析") from error
         if not any(line.strip() for page in pages for line in page):
             raise DocumentParseError("PDF 没有可提取的文本层；扫描件暂不支持")

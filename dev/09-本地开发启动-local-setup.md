@@ -26,7 +26,7 @@ cd cs353fz28
 if (!(Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-macOS/Linux 对应命令为 `test -f .env || cp .env.example .env`。配置文件只在本地保留，不提交。框架无需模型 API Key 即可启动；之后 C/D 接入实际模型时再补齐服务端变量。
+macOS/Linux 对应命令为 `test -f .env || cp .env.example .env`。配置文件只在本地保留，不提交。API 可以在没有模型密钥时启动，但完成真实索引和分析前必须配置可用的 Embedding 与生成模型服务。
 
 ## 2 启动开发依赖
 
@@ -54,8 +54,8 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 - API 文档：[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)。
 - GET /health/live：200 表示进程可用，不检查数据库。
 - GET /health/ready：检查实际 MongoDB、Redis、Qdrant；全部可用才返回 200，缺少服务返回 503 和脱敏状态。
-- GET /api/v1/meta：mode=scaffold，authentication=true、job_import=true，其余业务 feature=false，不能把依赖 ready 当作 M1 完成。
-- POST /api/v1/auth/login、GET /api/v1/me、POST /api/v1/jobs、GET /api/v1/jobs/{id} 已接真实 MongoDB；其余业务接口有效参数返回 501 NOT_IMPLEMENTED，参数无效返回统一 422。
+- GET /api/v1/meta：列出已实现的身份认证、文档上传、岗位导入、RAG 和分析能力；这不检查模型或依赖是否可用，也不代表端到端验收通过。
+- 登录、岗位、资料上传、执行状态、分析和证据接口均已接入；实际使用需要相应依赖和模型配置。参数无效时返回统一 422。
 
 没有 Docker 时仍可以启动前后端查看骨架，依赖检查显示未就绪；这不构成基础设施联调完成。
 
@@ -65,7 +65,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 在 /docs 展开 POST /api/v1/auth/login，使用邮箱和自选密码测试。200 返回 access_token、token_type、expires_in。复制原始 access_token，在顶部 Authorize 的 HTTPBearer 输入框粘贴后确认，再调用 GET /api/v1/me，应只返回本人 id、email、display_name。密码错误、没有令牌或令牌过期返回 401；MongoDB 停止时登录返回 503。勿在截图、日志或 GitHub 中保存密码、有效令牌。
 
-真实 MongoDB 自查可在 PowerShell 设置 `$env:RUN_MONGO_AUTH_TESTS = "1"` 后运行后端 pytest；测试使用 careerpilot_auth_test 库内独立生成的合成账号，只清理本次生成的用户和会话，不读取或改动本地种子账号。默认不设置此变量时跳过此项。该自查验证账号创建、重复初始化保护、登录、本人资料、缺失令牌和过期会话，其他业务的跨用户隔离仍待实现后验证。
+真实 MongoDB 自查可在 PowerShell 设置 `$env:RUN_MONGO_AUTH_TESTS = "1"` 后运行后端 pytest；测试使用 careerpilot_auth_test 库内独立生成的合成账号，只清理本次生成的用户和会话，不读取或改动本地种子账号。默认不设置此变量时跳过此项。该自查验证账号创建、重复初始化保护、登录、本人资料、缺失令牌和过期会话；完整用户隔离仍需在真实业务链路中验收。
 
 ### JD 创建与查询自查
 
@@ -101,7 +101,11 @@ npm run dev
 
 RAG 支持文本层 PDF 与 UTF-8 Markdown/TXT，PDF 引用按页定位；证据原文由 MongoDB 提供。LangGraph 接入说明见 [10 Agent 模块接入](10-Agent模块接入-agent-guide.md)。真实模型与存储仍需在目标环境联调；后续依赖使用 `uv add` 并提交锁文件。
 
-2026-10-22 的 M1 范围调整已要求有文本层 PDF 上传和 Python 后端解析，但当前 RAG 尚未实现 PDF 解析器，真实上传链路也仍待接入。C 交付时需锁定 PDF 解析依赖，B 接入 Worker；本地验收必须上传合成多页 PDF，核对原 PDF 页码、空白页后的定位和失败状态，不能只用 Markdown 或固定样例宣布 M1 完成。详细要求见 [08 的 PDF 交付与验收](08-M1开工计划-kickoff-plan.md)。
+PDF 提取结果按原页码保存，包括空白页。为了避免静默遗漏图形中的正文，当前采用严格保守模式：包含图片（包括头像或 Logo）、矢量绘制、注释、未知绘制指令或无法确认内容的 PDF 会被拒绝；不提供 OCR。请将内容转换为仅含可复制文字的 PDF，或上传 UTF-8 TXT/Markdown。即使文本能够复制，上传前也请核对解析结果和引用；安全处理不能保证任意 PDF 的视觉排版和提取文本完全一致。
+
+任务状态采用 Worker 心跳和后台状态协调：默认排队超过 3600 秒或运行时超过 300 秒未收到心跳后，API 会定期尝试协调资源与任务状态，查询时也会触发检查。可在 `.env` 中按环境设置 `EXECUTION_QUEUE_TIMEOUT_SECONDS` 和 `EXECUTION_LEASE_SECONDS`；超时不是实时进度保证。索引中断后可能留下不可见的未完成索引数据，失败资料请重新上传；这不是 M2 的完整故障补偿和重试机制。
+
+M1 要求有文本层 PDF 上传和 Python 后端解析，当前代码已接入解析器与 Worker。本地验收仍须上传独立合成的多页 PDF，核对原 PDF 页码、空白页后的定位和失败状态，不能只用 Markdown 或固定样例宣布 M1 完成。详细要求见 [08 的 PDF 交付与验收](08-M1开工计划-kickoff-plan.md)。
 
 ## RAG 模块配置与本地验证（成员 C，#8）
 
@@ -125,6 +129,16 @@ uv run --project backend pytest backend/tests -q
 ```
 
 真实服务验证（需 `EMBEDDING_API_KEY` 与可达的 Qdrant）：执行合成样例的解析→切分→入库→检索链路，确认三个需求查询（数据库设计/缓存/Docker）的候选排序和跨用户隔离；已发布版本不可原地重建，更新资料需使用新版本；检索结果为 chunk 元数据，quote 与 locator 由后端查 MongoDB 补齐。当前 Qdrant 指向云端集群的配置为本地 `.env` 设置，不随仓库提交。
+
+### 独立 M1 端到端验收
+
+启动 API、Worker 和全部依赖，配置真实 Embedding 与生成模型后，使用两个不同的本地测试账号执行：
+
+```powershell
+uv run --project backend python scripts/m1_acceptance.py --base-url http://127.0.0.1:8000 --timeout 600
+```
+
+脚本会提示输入两个账号和密码（密码不回显），或从 `M1_USER_EMAIL`、`M1_USER_PASSWORD`、`M1_OTHER_EMAIL`、`M1_OTHER_PASSWORD` 读取。脚本会在第一个账号中新增合成资料、岗位和分析记录，M1 没有删除功能，因此请只使用测试账号，不要使用个人或生产资料。它会检查 PDF 空白页后的页码、文本行号、伪装格式和跨用户隔离，并输出模型实际结论供人工核对；它无法独立证明服务端模型不是替身。没有真实模型或 Worker 时，不能将脚本的输入自查视为整链验收通过。只自查合成资料可运行 `uv run --project backend python scripts/m1_acceptance.py --self-test`。
 
 ## 更新统一接口类型
 

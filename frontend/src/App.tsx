@@ -10,14 +10,23 @@ import JdImport from './pages/JdImport';
 const steps = ['资料准备', '目标岗位', '匹配分析'];
 type Connection = 'checking' | 'connected' | 'disconnected';
 
-function readReadyDocuments(): string[] {
+function readSelectedReadyDocuments(): string[] {
   try {
-    const items = JSON.parse(sessionStorage.getItem('careerpilot.pending_documents') ?? '[]');
-    return Array.isArray(items)
-      ? items
-          .filter((item) => item.status === 'ready' && typeof item.documentId === 'string')
-          .map((item) => item.documentId)
-      : [];
+    const selected: unknown = JSON.parse(
+      sessionStorage.getItem('careerpilot.selected_documents') ?? '[]',
+    );
+    const items: unknown = JSON.parse(
+      sessionStorage.getItem('careerpilot.pending_documents') ?? '[]',
+    );
+    if (!Array.isArray(selected) || !Array.isArray(items)) return [];
+    const ready = new Set(
+      items
+        .filter((item) => item && item.status === 'ready' && typeof item.documentId === 'string')
+        .map((item) => item.documentId),
+    );
+    return [
+      ...new Set(selected.filter((id): id is string => typeof id === 'string' && ready.has(id))),
+    ].slice(0, 20);
   } catch {
     return [];
   }
@@ -43,7 +52,7 @@ export default function App() {
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [hasRealAnalysis, setHasRealAnalysis] = useState(false);
-  const [documentIds, setDocumentIds] = useState<string[]>(readReadyDocuments);
+  const [documentIds, setDocumentIds] = useState<string[]>([]);
   const [title, setTitle] = useState(() => readPendingJob()?.title ?? '后端开发实习生');
   const [jd, setJd] = useState(() => readPendingJob()?.jd ?? '');
   const [user, setUser] = useState<UserResult | null>(null);
@@ -54,6 +63,7 @@ export default function App() {
 
   function clearSessionData() {
     sessionStorage.removeItem('careerpilot.pending_documents');
+    sessionStorage.removeItem('careerpilot.selected_documents');
     sessionStorage.removeItem('careerpilot.pending_analysis');
     sessionStorage.removeItem('careerpilot.owner');
     setDocumentIds([]);
@@ -63,7 +73,11 @@ export default function App() {
   }
 
   function acceptUser(current: UserResult) {
-    if (sessionStorage.getItem('careerpilot.owner') !== current.id) clearSessionData();
+    if (sessionStorage.getItem('careerpilot.owner') !== current.id) {
+      clearSessionData();
+    } else {
+      setDocumentIds(readSelectedReadyDocuments());
+    }
     sessionStorage.setItem('careerpilot.owner', current.id);
     setUser(current);
   }
@@ -340,7 +354,11 @@ export default function App() {
                 <p className="muted">
                   M1 支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。
                 </p>
-                <DocumentUpload key={user?.id ?? 'anonymous'} onReadyChange={setDocumentIds} />
+                <DocumentUpload
+                  key={user?.id ?? 'anonymous'}
+                  userId={user?.id}
+                  onReadyChange={setDocumentIds}
+                />
               </div>
               <div className="panel sample-panel">
                 <span className="eyebrow">无需个人资料</span>
@@ -451,16 +469,18 @@ export default function App() {
           className="panel"
           hidden={step === 0 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
         >
-          <JdImport
-            key={user?.id ?? 'anonymous'}
-            jd={jd}
-            title={title}
-            documentIds={documentIds}
-            onAnalysis={(result) => {
-              setHasRealAnalysis(result !== null);
-              if (result) setAnalysisVisible(false);
-            }}
-          />
+          {(!hasAuthToken() || user) && (
+            <JdImport
+              key={user?.id ?? 'anonymous'}
+              jd={jd}
+              title={title}
+              documentIds={documentIds}
+              onAnalysis={(result) => {
+                setHasRealAnalysis(result !== null);
+                if (result) setAnalysisVisible(false);
+              }}
+            />
+          )}
         </div>
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>

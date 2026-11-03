@@ -32,6 +32,7 @@ def database(monkeypatch):
     db = connection.return_value.__enter__.return_value
     db.document_versions.update_one.return_value.matched_count = 1
     db.documents.update_one.return_value.matched_count = 1
+    db.documents.find_one.return_value = {"id": "doc_x", "status": "uploaded"}
     return db
 
 

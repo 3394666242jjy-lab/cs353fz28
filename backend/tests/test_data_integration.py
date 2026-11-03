@@ -253,3 +253,174 @@ def test_pdf_index_and_analysis_with_real_mongo_and_qdrant(mongo_settings, tmp_p
             headers=headers,
             timeout=10,
         )
+
+
+def test_mongo_expired_index_fences_old_worker_and_preserves_ready_result(mongo_settings):
+    from datetime import UTC, datetime, timedelta
+
+    from app.services.executions import get_execution, sweep_expired_executions
+
+    settings = mongo_settings
+    user = "synthetic-user"
+    client = MongoClient(settings.mongodb_uri.get_secret_value())
+    db = client[settings.mongodb_database]
+    try:
+        document_id = create_document(
+            settings,
+            user,
+            kind="resume",
+            filename="resume.txt",
+            media_type="text/plain",
+            size_bytes=13,
+            storage_key="private/input",
+        )
+        execution_id = create_execution(
+            settings, user, ExecutionCreate(type="index", resource_id=document_id)
+        )
+        assert transition_execution(
+            settings, user, execution_id, expected_state_version=1, status="running"
+        )
+        db.executions.update_one(
+            {"id": execution_id}, {"$set": {"updated_at": datetime.now(UTC) - timedelta(hours=2)}}
+        )
+        sweep_expired_executions(settings)
+        assert get_execution(settings, user, execution_id).status == "failed"
+        assert db.documents.find_one({"id": document_id})["status"] == "failed"
+        with pytest.raises(ValueError):
+            save_indexed_version(settings, user, document_id, payload(1), [chunk("late-chunk")])
+        assert not transition_execution(
+            settings,
+            user,
+            execution_id,
+            expected_state_version=2,
+            status="succeeded",
+            result_type="document",
+            result_id=document_id,
+        )
+
+        ready_id = create_document(
+            settings,
+            user,
+            kind="resume",
+            filename="ready.txt",
+            media_type="text/plain",
+            size_bytes=13,
+            storage_key="private/ready",
+        )
+        ready_execution = create_execution(
+            settings, user, ExecutionCreate(type="index", resource_id=ready_id)
+        )
+        assert transition_execution(
+            settings, user, ready_execution, expected_state_version=1, status="running"
+        )
+        save_indexed_version(settings, user, ready_id, payload(1), [chunk("ready-chunk")])
+        db.executions.update_one(
+            {"id": ready_execution},
+            {"$set": {"updated_at": datetime.now(UTC) - timedelta(hours=2)}},
+        )
+        sweep_expired_executions(settings)
+        result = get_execution(settings, user, ready_execution)
+        assert result.status == "succeeded" and result.result_id == ready_id
+        assert db.documents.find_one({"id": ready_id})["status"] == "ready"
+    finally:
+        client.close()
+
+
+def test_mongo_failed_execution_repairs_pending_resource_without_clobber(mongo_settings):
+    from app.schemas.resources import ExecutionError
+    from app.services.executions import get_execution, sweep_expired_executions
+
+    settings = mongo_settings
+    user = "synthetic-user"
+    client = MongoClient(settings.mongodb_uri.get_secret_value())
+    db = client[settings.mongodb_database]
+    try:
+        db.analyses.insert_one({"id": "ana_pending", "user_id": user, "status": "pending"})
+        execution_id = create_execution(
+            settings, user, ExecutionCreate(type="analysis", resource_id="ana_pending")
+        )
+        assert transition_execution(
+            settings,
+            user,
+            execution_id,
+            expected_state_version=1,
+            status="failed",
+            error=ExecutionError(code="TEST", message="failed before resource write"),
+        )
+        sweep_expired_executions(settings)
+        assert db.analyses.find_one({"id": "ana_pending"})["status"] == "failed"
+        assert get_execution(settings, user, execution_id).status == "failed"
+        db.analyses.insert_one({"id": "ana_ready", "user_id": user, "status": "ready"})
+        ready_exec = create_execution(
+            settings, user, ExecutionCreate(type="analysis", resource_id="ana_ready")
+        )
+        assert transition_execution(
+            settings,
+            user,
+            ready_exec,
+            expected_state_version=1,
+            status="failed",
+            error=ExecutionError(code="TEST", message="late failure"),
+        )
+        sweep_expired_executions(settings)
+        assert db.analyses.find_one({"id": "ana_ready"})["status"] == "ready"
+    finally:
+        client.close()
+
+
+def test_mongo_expiry_race_with_index_publication_has_consistent_result(mongo_settings):
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import UTC, datetime, timedelta
+    from threading import Barrier
+
+    from app.services.executions import get_execution, sweep_expired_executions
+
+    settings = mongo_settings
+    user = "synthetic-user"
+    client = MongoClient(settings.mongodb_uri.get_secret_value())
+    db = client[settings.mongodb_database]
+    try:
+        document_id = create_document(
+            settings,
+            user,
+            kind="resume",
+            filename="race.txt",
+            media_type="text/plain",
+            size_bytes=13,
+            storage_key="private/race",
+        )
+        execution_id = create_execution(
+            settings, user, ExecutionCreate(type="index", resource_id=document_id)
+        )
+        assert transition_execution(
+            settings, user, execution_id, expected_state_version=1, status="running"
+        )
+        db.executions.update_one(
+            {"id": execution_id},
+            {"$set": {"updated_at": datetime.now(UTC) - timedelta(hours=2)}},
+        )
+        barrier = Barrier(2)
+
+        def publish():
+            barrier.wait(timeout=10)
+            try:
+                save_indexed_version(settings, user, document_id, payload(1), [chunk("race-chunk")])
+            except (ValueError, RuntimeError):
+                pass  # Recovery may win the document state CAS.
+
+        def recover():
+            barrier.wait(timeout=10)
+            sweep_expired_executions(settings)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(publish), pool.submit(recover)]
+            for future in futures:
+                future.result(timeout=30)
+        execution = get_execution(settings, user, execution_id)
+        document = db.documents.find_one({"id": document_id})
+        assert (execution.status, document["status"]) in {
+            ("succeeded", "ready"),
+            ("failed", "failed"),
+        }
+    finally:
+        client.close()

@@ -7,8 +7,12 @@ dependency must fail the execution with the reason, never hang or fake success.
 """
 
 import asyncio
+import logging
+import re
+from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
 
 from celery import Celery
@@ -29,11 +33,69 @@ from app.services.documents import (
     save_indexed_version,
     set_document_status,
 )
-from app.services.executions import transition_execution
+from app.services.executions import heartbeat_execution, transition_execution
 from app.services.jobs import load_job
-from app.services.storage import read_upload, save_extracted_text
+from app.services.storage import read_upload, save_extracted_pages, save_extracted_text
 
 LocatorAdapter: TypeAdapter[TextLocator | PdfLocator] = TypeAdapter(TextLocator | PdfLocator)
+
+
+def _public_index_error(error: Exception) -> str:
+    """Return only fixed, explicitly approved user-facing diagnostics."""
+    try:
+        from app.rag.chunking import DocumentParseError
+        from app.rag.embeddings import EmbeddingError
+        from app.rag.vector_store import VectorStoreError
+    except ImportError:
+        return "文档处理失败，请稍后重试或联系管理员。"
+    if isinstance(error, DocumentParseError):
+        message = str(error)
+        allowed = {
+            "暂不支持加密 PDF，请上传可直接读取的文件",
+            "PDF 文件损坏或无法解析",
+            "PDF 没有可提取的文本层；扫描件暂不支持",
+            "文档不是有效的 UTF-8 文本",
+        }
+        if message in allowed:
+            return message
+        page = re.fullmatch(
+            r"PDF 第 (\d+) 页(?:可能含无法提取的扫描内容；请检查并上传有完整文本层的 PDF|"
+            r"含无法核验的图形内容（含图片、头像或矢量图）；请上传仅含可复制文字的 PDF，"
+            r"或使用 UTF-8 TXT/Markdown)",
+            message,
+        )
+        if page:
+            return f"PDF 第 {page.group(1)} 页含无法核验的内容，请上传纯文字 PDF 或 TXT/Markdown。"
+        return "文档无法解析，请检查文件格式或联系管理员。"
+    if isinstance(error, EmbeddingError):
+        return "向量化服务失败，请检查模型配置或稍后重试。"
+    if isinstance(error, VectorStoreError):
+        return "向量索引服务失败，请检查服务配置或稍后重试。"
+    return "文档处理失败，请稍后重试或联系管理员。"
+
+
+def _public_analysis_error(error: Exception) -> str:
+    """Map known agent error codes to fixed messages; never echo exception text."""
+    try:
+        from app.agent.errors import AgentError
+    except ImportError:
+        return "分析执行失败，请稍后重试或联系管理员。"
+    if isinstance(error, AgentError):
+        messages = {
+            "MODEL_NOT_CONFIGURED": "模型尚未正确配置，请检查模型地址和密钥。",
+            "MODEL_AUTH_FAILED": "模型认证失败，请检查模型密钥。",
+            "MODEL_REQUEST_REJECTED": "模型拒绝请求，请检查模型和输出格式配置。",
+            "MODEL_RATE_LIMITED": "模型服务请求过于频繁，请稍后重试。",
+            "MODEL_TIMEOUT": "模型调用超时，请稍后重试。",
+            "MODEL_UNAVAILABLE": "模型服务暂不可用，请稍后重试。",
+            "MODEL_OUTPUT_INVALID": "模型输出格式不正确，请重试。",
+            "RETRIEVAL_TIMEOUT": "证据检索超时，请稍后重试。",
+            "ANALYSIS_TIMEOUT": "分析超时，请稍后重试。",
+            "BUDGET_EXCEEDED": "分析超过执行预算，请缩小岗位描述后重试。",
+        }
+        return messages.get(error.code, "分析未能完成，请检查配置或稍后重试。")
+    return "分析执行失败，请稍后重试或联系管理员。"
+
 
 settings = get_settings()
 celery_app = Celery("careerpilot", broker=settings.celery_broker_url.get_secret_value())
@@ -69,19 +131,16 @@ def _load_vector_store() -> Any:
     return get_vector_store
 
 
-def _extract_text(raw: bytes, file_type: str) -> str:
-    """Extract plain text via member C's parser when available.
+def _save_extraction(
+    settings_obj: Any, user_id: str, document_id: str, version: int, raw: bytes, file_type: str
+) -> str:
+    """Persist PDF extraction with original page numbers; text formats stay plain text."""
+    from app.rag.chunking import parse_document
 
-    TXT/Markdown uploads are already plain text, so the raw bytes are a valid
-    fallback while C's module is not merged.
-    """
-    try:
-        from app.rag.chunking import parse_document
-    except ImportError:
-        if file_type == ".pdf":
-            raise RuntimeError("PDF 解析模块尚未集成") from None
-        return raw.decode("utf-8")
-    return parse_document(raw, file_type=file_type).text
+    parsed = parse_document(raw, file_type=file_type)
+    if parsed.pages is not None:
+        return save_extracted_pages(settings_obj, user_id, document_id, version, parsed.pages)
+    return save_extracted_text(settings_obj, user_id, document_id, version, parsed.text)
 
 
 def _fail(
@@ -107,12 +166,35 @@ def _fail(
     return transitioned
 
 
+@contextmanager
+def _heartbeat(settings_obj: Any, user_id: str, execution_id: str):
+    """Renew the worker lease while the actual Celery task is alive."""
+    stopped = Event()
+
+    def renew() -> None:
+        interval = max(1, settings_obj.execution_lease_seconds // 3)
+        while not stopped.wait(interval):
+            try:
+                heartbeat_execution(settings_obj, user_id, execution_id)
+            except Exception:  # noqa: BLE001 - transient DB outage must not kill the worker
+                logging.getLogger(__name__).exception("Could not renew execution lease")
+
+    thread = Thread(target=renew, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stopped.set()
+        thread.join(timeout=1)
+
+
 @celery_app.task(name="careerpilot.index_document")
 def index_document_task(
     storage_key: str, user_id: str, document_id: str, version: int, execution_id: str
 ) -> None:
     """Index one uploaded document version and persist the outcome."""
-    run_indexing(settings, storage_key, user_id, document_id, version, execution_id)
+    with _heartbeat(settings, user_id, execution_id):
+        run_indexing(settings, storage_key, user_id, document_id, version, execution_id)
 
 
 def run_indexing(
@@ -171,12 +253,8 @@ def run_indexing(
             )
 
         indexed = asyncio.run(_run_pipeline())
-        extracted_text_key = save_extracted_text(
-            settings_obj,
-            user_id,
-            document_id,
-            version,
-            _extract_text(raw, Path(storage_key).suffix.lower()),
+        extracted_text_key = _save_extraction(
+            settings_obj, user_id, document_id, version, raw, Path(storage_key).suffix.lower()
         )
         save_indexed_version(
             settings_obj,
@@ -201,7 +279,7 @@ def run_indexing(
             execution_id,
             2,
             "INDEXING_FAILED",
-            f"文档解析或索引失败：{exc}"[:500],
+            _public_index_error(exc),
             document_id,
         )
         return
@@ -302,7 +380,8 @@ def _build_retriever(settings_obj: Any) -> _MongoEvidenceRetriever:
 @celery_app.task(name="careerpilot.run_analysis")
 def run_analysis_task(analysis_id: str, user_id: str, execution_id: str) -> None:
     """Run one analysis and persist the outcome."""
-    run_analysis(settings, analysis_id, user_id, execution_id)
+    with _heartbeat(settings, user_id, execution_id):
+        run_analysis(settings, analysis_id, user_id, execution_id)
 
 
 def run_analysis(settings_obj: Any, analysis_id: str, user_id: str, execution_id: str) -> None:
@@ -347,7 +426,7 @@ def run_analysis(settings_obj: Any, analysis_id: str, user_id: str, execution_id
         if not save_analysis_result(settings_obj, user_id, analysis_id, result):
             raise RuntimeError("分析结果保存失败：记录已被并发更新。")
     except Exception as exc:  # noqa: BLE001 - any failure must fail the execution
-        message = f"分析执行失败：{exc}"[:500]
+        message = _public_analysis_error(exc)
         if _fail(settings_obj, user_id, execution_id, 2, "ANALYSIS_FAILED", message):
             set_analysis_failed(settings_obj, user_id, analysis_id, error=message)
         return

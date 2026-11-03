@@ -18,13 +18,15 @@ interface UploadItem {
 interface DocumentUploadProps {
   /** 就绪资料的 document_id 列表变化时回调，供父组件传给分析流程。 */
   onReadyChange?: (readyIds: string[]) => void;
+  userId?: string;
 }
 
+const MAX_DOCUMENTS = 20;
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MiB
 const ALLOWED = ['.pdf', '.md', '.txt'];
 const POLL_INTERVAL_MS = 1500;
-const POLL_TIMEOUT_MS = 120_000;
 const STORAGE_KEY = 'careerpilot.pending_documents';
+const SELECTED_KEY = 'careerpilot.selected_documents';
 
 const statusLabels = {
   processing: '处理中',
@@ -54,15 +56,30 @@ function readSavedItems(): UploadItem[] {
   }
 }
 
+function readSelectedIds(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(sessionStorage.getItem(SELECTED_KEY) ?? '[]');
+    return Array.isArray(parsed)
+      ? [...new Set(parsed.filter((id): id is string => typeof id === 'string'))].slice(
+          0,
+          MAX_DOCUMENTS,
+        )
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function mergeItems(prev: UploadItem[], updates: UploadItem[]): UploadItem[] {
   const map = new Map(updates.map((item) => [item.key, item]));
   return prev.map((item) => map.get(item.key) ?? item);
 }
 
-export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
+export default function DocumentUpload({ onReadyChange, userId }: DocumentUploadProps) {
   const [kind, setKind] = useState<Kind>('resume');
   const [file, setFile] = useState<File | null>(null);
-  const [items, setItems] = useState<UploadItem[]>(() => readSavedItems());
+  const [items, setItems] = useState<UploadItem[]>(() => (userId ? readSavedItems() : []));
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => (userId ? readSelectedIds() : []));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -88,10 +105,66 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
   }, []);
 
   useEffect(() => {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    const ready = items.filter((item) => item.status === 'ready').map((item) => item.documentId);
-    onReadyChangeRef.current?.(ready);
+    if (!userId) return;
+    const controller = new AbortController();
+    async function loadDocuments() {
+      try {
+        const all: UploadItem[] = [];
+        let cursor: string | undefined;
+        do {
+          const response = await api.listDocuments(cursor, controller.signal);
+          for (const doc of response.data.items) {
+            if (doc.status === 'deleted') continue;
+            all.push({
+              key: `${doc.kind}-${doc.id}`,
+              documentId: doc.id,
+              kind: doc.kind,
+              filename: doc.filename,
+              status:
+                doc.status === 'ready'
+                  ? 'ready'
+                  : doc.status === 'failed'
+                    ? 'failed'
+                    : 'processing',
+              error: doc.error ?? undefined,
+              createdAt: Date.now(),
+            });
+          }
+          cursor = response.data.next_cursor ?? undefined;
+        } while (cursor);
+        if (!controller.signal.aborted) {
+          setItems((prev) => {
+            const ids = new Set(all.map((item) => item.documentId));
+            return [...prev.filter((item) => !ids.has(item.documentId)), ...all];
+          });
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setError(`加载已有资料失败：${describeError(err).message}`);
+      }
+    }
+    void loadDocuments();
+    return () => controller.abort();
+  }, [userId]);
+
+  useEffect(() => {
+    const failedIds = new Set(
+      items.filter((item) => item.status === 'failed').map((item) => item.documentId),
+    );
+    if (failedIds.size) setSelectedIds((prev) => prev.filter((id) => !failedIds.has(id)));
   }, [items]);
+
+  useEffect(() => {
+    if (!userId) {
+      onReadyChangeRef.current?.([]);
+      return;
+    }
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    sessionStorage.setItem(SELECTED_KEY, JSON.stringify(selectedIds));
+    const ready = items
+      .filter((item) => item.status === 'ready' && selectedIds.includes(item.documentId))
+      .map((item) => item.documentId);
+    onReadyChangeRef.current?.(ready);
+  }, [items, selectedIds, userId]);
 
   function stopPolling() {
     if (timerRef.current != null) {
@@ -110,13 +183,8 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
   async function tick() {
     const processing = itemsRef.current.filter((item) => item.status === 'processing');
     if (processing.length === 0) return;
-    const now = Date.now();
     const updates: UploadItem[] = [];
     for (const item of processing) {
-      if (now - item.createdAt > POLL_TIMEOUT_MS) {
-        updates.push({ ...item, status: 'failed', error: '处理超时，请稍后重试。' });
-        continue;
-      }
       try {
         const res = await api.getDocument(item.documentId);
         const doc = res.data;
@@ -127,7 +195,7 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
         }
       } catch (err) {
         if (isAbortError(err)) continue;
-        updates.push({ ...item, status: 'failed', error: describeError(err).message });
+        updates.push({ ...item, error: `暂时无法查询，将继续重试：${describeError(err).message}` });
       }
     }
     if (updates.length > 0) {
@@ -167,6 +235,10 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
         createdAt: Date.now(),
       };
       setItems((prev) => [item, ...prev]);
+      setSelectedIds((prev) => (prev.length < MAX_DOCUMENTS ? [...prev, item.documentId] : prev));
+      if (selectedIds.length >= MAX_DOCUMENTS) {
+        setError(`资料已上传，但本次分析最多选择 ${MAX_DOCUMENTS} 份。请取消其他选择后手动选择。`);
+      }
       if (inputRef.current) inputRef.current.value = '';
       setFile(null);
     } catch (err) {
@@ -174,6 +246,14 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function toggleSelection(id: string) {
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((selected) => selected !== id);
+      if (prev.length >= MAX_DOCUMENTS) return prev;
+      return [...prev, id];
+    });
   }
 
   return (
@@ -220,7 +300,8 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
         </button>
       </div>
       <p id="upload-hint" className="small muted">
-        支持 .pdf / .md / .txt，单文件 ≤ 10 MiB；PDF 需要有文本层。
+        支持 .pdf / .md / .txt，单文件 ≤ 10 MiB；PDF
+        须仅含可复制文字，含图片、头像或图形时请转换后上传。
       </p>
       {file && <p className="small">已选择 {file.name}</p>}
       {error && (
@@ -230,16 +311,35 @@ export default function DocumentUpload({ onReadyChange }: DocumentUploadProps) {
       )}
 
       {items.length > 0 && (
-        <ul className="upload-list">
-          {items.map((item) => (
-            <li key={item.key}>
-              <span className="file-type">{extOf(item.filename)}</span>
-              <span className="upload-name">{item.filename}</span>
-              <StatusBadge label={statusLabels[item.status]} tone={statusTones[item.status]} />
-              {item.error && <span className="muted small">{item.error}</span>}
-            </li>
-          ))}
-        </ul>
+        <>
+          <p className="small muted" id="document-selection-hint" aria-live="polite">
+            选择本次分析使用的资料：已选 {selectedIds.length} / {MAX_DOCUMENTS}{' '}
+            份；新上传的资料会自动选中。
+          </p>
+          <ul className="upload-list">
+            {items.map((item) => (
+              <li key={item.key}>
+                <label className="document-choice">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(item.documentId)}
+                    disabled={
+                      item.status === 'failed' ||
+                      (!selectedIds.includes(item.documentId) &&
+                        selectedIds.length >= MAX_DOCUMENTS)
+                    }
+                    onChange={() => toggleSelection(item.documentId)}
+                    aria-describedby="document-selection-hint"
+                  />
+                  <span className="file-type">{extOf(item.filename)}</span>
+                  <span className="upload-name">{item.filename}</span>
+                </label>
+                <StatusBadge label={statusLabels[item.status]} tone={statusTones[item.status]} />
+                {item.error && <span className="muted small">{item.error}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   );

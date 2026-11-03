@@ -16,7 +16,7 @@ def client():
     return TestClient(create_app(Settings(_env_file=None, app_env="test")))
 
 
-def test_liveness_and_capabilities_do_not_claim_business_is_implemented(client):
+def test_liveness_and_capabilities_describe_implemented_m1_features(client):
     response = client.get("/health/live")
     assert response.status_code == 200
     assert response.json()["data"]["status"] == "ok"
@@ -25,11 +25,9 @@ def test_liveness_and_capabilities_do_not_claim_business_is_implemented(client):
     assert meta["mode"] == "scaffold"
     assert meta["features"]["authentication"] is True
     assert meta["features"]["job_import"] is True
-    assert all(
-        value is False
-        for key, value in meta["features"].items()
-        if key not in {"authentication", "job_import", "document_upload"}
-    )
+    assert meta["features"]["document_upload"] is True
+    assert meta["features"]["rag"] is True
+    assert meta["features"]["agent_analysis"] is True
 
 
 @pytest.mark.parametrize("all_ready", [True, False])
@@ -109,6 +107,28 @@ def test_upload_rejects_unsupported_file_type(client, monkeypatch):
     )
     response = client.post(
         "/api/v1/documents", files=_multipart(b"content", "demo.docx"), data={"kind": "project"}
+    )
+    assert response.status_code == 415
+    assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("fake.pdf", b"not a pdf"),
+        ("fake.txt", b"%PDF-1.7"),
+        ("fake.md", b"PK\x03\x04binary"),
+        ("binary.txt", b"abc\x00def"),
+        ("bad.md", b"\xff\xfe"),
+    ],
+)
+def test_upload_rejects_disguised_or_non_utf8_file(client, monkeypatch, filename, content):
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.save_upload", lambda *a, **kw: pytest.fail("invalid format persisted")
+    )
+    response = client.post(
+        "/api/v1/documents", files=_multipart(content, filename), data={"kind": "resume"}
     )
     assert response.status_code == 415
     assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_TYPE"

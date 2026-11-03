@@ -296,8 +296,8 @@ export interface components {
              *       "authentication": true,
              *       "document_upload": true,
              *       "job_import": true,
-             *       "rag": false,
-             *       "agent_analysis": false
+             *       "rag": true,
+             *       "agent_analysis": true
              *     }
              */
             features: {
