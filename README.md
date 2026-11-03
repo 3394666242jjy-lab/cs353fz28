@@ -2,15 +2,15 @@
 
 CS353FZ 五人团队项目。面向大学生实习求职，结合个人经历、目标岗位和检索到的知识资料，提供有依据的岗位分析、准备计划和模拟面试。
 
-当前阶段：M1 的本地账号、资料上传、PDF/文本解析、索引、岗位分析和证据查询已经接入。运行真实流程需要配置并启动 MongoDB、Redis、Qdrant、Embedding 和生成模型；样例演练使用合成数据，不代表真实模型结果。
+当前阶段：M1 本地账号、资料上传、PDF/文本解析、索引、岗位分析和证据查询已接入，真实模型与浏览器联调记录见 [M1 联调记录](dev/11-M1联调记录-acceptance.md)。代码进入主分支的状态以 [M1 集成 PR #22](https://github.com/3394666242jjy-lab/cs353fz28/pull/22) 为准；M2 任务已建立，尚未实现。运行真实流程需配置 MongoDB、Redis、Qdrant、Embedding 和生成模型；样例演练使用合成数据，不代表真实模型结果。
 
 ## 从这里开始
 
 1. 按 [本地启动指南](dev/09-本地开发启动-local-setup.md) 安装锁定依赖，启动前后端；前端默认地址为 `http://127.0.0.1:5173`，API 文档为 `http://127.0.0.1:8000/docs`。
 2. 阅读 [M1 开工计划](dev/08-M1开工计划-kickoff-plan.md)，使用 [合成样例](examples/README.md) 对齐契约；只索引原始简历和项目说明。
-3. 按启动指南配置本地依赖、模型和种子账号，再用合成资料验证完整流程；真实服务联调需在目标环境完成。
+3. 按启动指南配置本地依赖、模型和种子账号，再用独立合成资料验证完整流程；真实联调的运行条件和结果见 M1 联调记录。
 
-**M1 必做：PDF/Markdown/TXT 资料上传 → Python 后端解析 → JD 导入 → 向量检索 → 逐项分析 → 原文引用展示。** PDF 支持有文本层文件，引用定位到原 PDF 页码；扫描件 OCR 留作扩展。准备计划、模拟面试和云端部署不作为本轮开发前置条件。
+**M1 必做：PDF/Markdown/TXT 资料上传 → Python 后端解析 → JD 导入 → 向量检索 → 逐项分析 → 原文引用展示。** PDF 引用定位到原文件页码；为避免遗漏图片中的正文，当前严格模式拒绝含图片、矢量绘制等无法可靠核验内容的 PDF，带头像或装饰的文件可能需要转为纯文字 PDF、TXT 或 Markdown。扫描件 OCR 留作扩展；准备计划、模拟面试和云端部署不作为本轮开发前置条件。
 
 ## 技术与部署方案
 
@@ -53,16 +53,16 @@ P0/P1 表示最终交付优先级；实现顺序另按里程碑划分：
 
 | 负责人 | 起点 | 下一步 |
 | --- | --- | --- |
-| A 前端 | [frontend/src](frontend/src) | 用真实上传、JD、轮询与证据接口替换样例流程 |
-| B 后端 | [backend/app/api](backend/app/api)、[schemas](backend/app/schemas)、[worker.py](backend/app/worker.py) | 实现鉴权、MongoDB、文件与任务持久化 |
-| C RAG | [backend/app/rag/contracts.py](backend/app/rag/contracts.py) | 在 Python 后端实现 PDF 逐页解析、文本切分、向量入库、用户隔离和带位置证据检索 |
-| D Agent | [backend/app/agent/pipeline.py](backend/app/agent/pipeline.py)、[接入说明](dev/10-Agent模块接入-agent-guide.md) | 已实现 M1 图与结构化校验；真实模型和 B/C 全链路待联调 |
+| A 前端 | [frontend/src](frontend/src) | 维护 M1 真实页面，并实现 M2 资料管理、计划确认及 SSE |
+| B 后端 | [backend/app/api](backend/app/api)、[schemas](backend/app/schemas)、[worker.py](backend/app/worker.py) | 维护 M1 业务链路，并实现 M2 版本、计划和可靠任务 |
+| C RAG | [backend/app/rag](backend/app/rag) | 维护 PDF/文本解析、证据定位及用户隔离，开展 M2 检索增强实验 |
+| D Agent | [backend/app/agent/pipeline.py](backend/app/agent/pipeline.py)、[接入说明](dev/10-Agent模块接入-agent-guide.md) | 维护 M1 分析流程，增加 M2 持久化恢复与计划生成 |
 
 公共类型由 Pydantic 导出 OpenAPI，再生成前端 TypeScript；变更后执行启动指南中的生成命令并提交生成文件。依赖版本锁定在 `backend/uv.lock` 与 `frontend/package-lock.json`。当前 Compose 只用于本地 MongoDB、Redis、Qdrant，不能直接用于生产发布。
 
 ## 五人分工
 
-成员姓名和 GitHub 账号由团队确认后补充。A–D 是职责编号，不代表职级。
+A–D 是职责编号，不代表职级。M2 负责人按已有 M1 Issue 认领及项目负责人确认的 RAG 分工记录。
 
 | 成员 | 主要责任 | 独立交付物 | 协作边界 |
 | --- | --- | --- | --- |
@@ -74,7 +74,16 @@ P0/P1 表示最终交付优先级；实现顺序另按里程碑划分：
 
 最终测试与部署由负责人承担，不单独分配给四位组员。每位开发者仍需在交付前自查自己的模块，提供启动方式、样例输入输出和已知问题；这属于模块交付，不另设测试岗位。
 
-首轮任务已建立，账号未确定前按角色等待认领：负责人 [#5](https://github.com/3394666242jjy-lab/cs353fz28/issues/5)、A 前端 [#6](https://github.com/3394666242jjy-lab/cs353fz28/issues/6)、B 后端 [#7](https://github.com/3394666242jjy-lab/cs353fz28/issues/7)、C RAG [#8](https://github.com/3394666242jjy-lab/cs353fz28/issues/8)、D Agent [#9](https://github.com/3394666242jjy-lab/cs353fz28/issues/9)。各任务包含交付物、依赖与验收条件，文档合并不代表这些开发任务已完成。
+M1 任务：负责人 [#5](https://github.com/3394666242jjy-lab/cs353fz28/issues/5)、A [#6](https://github.com/3394666242jjy-lab/cs353fz28/issues/6)、B [#7](https://github.com/3394666242jjy-lab/cs353fz28/issues/7)、C [#8](https://github.com/3394666242jjy-lab/cs353fz28/issues/8)、D [#9](https://github.com/3394666242jjy-lab/cs353fz28/issues/9)。M1 任务以实际验收和 Issue 状态为准。
+
+| M2 职责 | 负责人 | 任务 |
+| --- | --- | --- |
+| A 前端 | [KrissirK777](https://github.com/KrissirK777) | [#23 资料管理、计划确认与 SSE 恢复](https://github.com/3394666242jjy-lab/cs353fz28/issues/23) |
+| B 后端 | [pupucurry](https://github.com/pupucurry) | [#24 资料版本、计划 API 与可靠任务](https://github.com/3394666242jjy-lab/cs353fz28/issues/24) |
+| C RAG | [Dickson666](https://github.com/Dickson666) | [#25 资料生命周期与检索增强评测](https://github.com/3394666242jjy-lab/cs353fz28/issues/25) |
+| D Agent | [devaultlambing-bot](https://github.com/devaultlambing-bot) | [#26 持久化恢复与准备计划](https://github.com/3394666242jjy-lab/cs353fz28/issues/26) |
+
+M2 先对齐资料版本、计划确认、事件与恢复契约，再进行跨模块联调。计划事务与 Outbox 需要支持事务的 MongoDB 环境；本地开发骨架不等同正式部署。任务看板、模拟面试属于 M3，OCR 为后续扩展。
 
 ## 模块协作
 
@@ -127,6 +136,6 @@ D 生成计划草稿并暂停 → A 确认 → B 保存正式计划并恢复执�
 
 ## 待确认事项
 
-- 五位成员姓名、GitHub 账号和每周可投入时间。
+- 团队成员姓名及每周可投入时间，M2 排期和接口评审时间。
 - 阿里云地域、规格、预算、托管 MongoDB 与 Checkpoint 适配器兼容性、模型服务可达性及依赖版本：见技术架构和部署指南，待原型验证。
 - 报告页数和可调整的展示／面试时间，以老师或 Moodle 的最新明确要求为准。
