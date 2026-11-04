@@ -14,20 +14,23 @@ from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread
 from typing import Any
+from uuid import uuid4
 
 from celery import Celery
 from pydantic import TypeAdapter
 
 from app.config import get_settings
 from app.schemas.analysis import DocumentVersion, Evidence, PdfLocator, TextLocator
-from app.schemas.resources import ExecutionError, JobResult
+from app.schemas.resources import ExecutionError, JobResult, PendingInput
 from app.services.analyses import (
     get_analysis,
     save_analysis_result,
     set_analysis_failed,
 )
+from app.services.dispatch import get_dispatch
 from app.services.documents import (
     IndexedVersionPayload,
+    get_deleted_document,
     get_document,
     list_chunks_by_ids,
     list_document_versions,
@@ -35,10 +38,23 @@ from app.services.documents import (
     save_indexed_version,
     set_document_status,
     set_purge_status,
+    set_version_failed,
 )
-from app.services.executions import heartbeat_execution, transition_execution
+from app.services.executions import (
+    heartbeat_execution,
+    transition_execution,
+    transition_to_waiting,
+)
+from app.services.inputs import load_input_by_id
 from app.services.jobs import load_job
-from app.services.storage import read_upload, save_extracted_pages, save_extracted_text
+from app.services.plans import get_plan_by_execution, save_plan_draft
+from app.services.storage import (
+    read_upload,
+    remove_extracted_versions,
+    remove_upload,
+    save_extracted_pages,
+    save_extracted_text,
+)
 
 LocatorAdapter: TypeAdapter[TextLocator | PdfLocator] = TypeAdapter(TextLocator | PdfLocator)
 
@@ -200,6 +216,38 @@ def index_document_task(
         run_indexing(settings, storage_key, user_id, document_id, version, execution_id)
 
 
+def _fail_index(
+    settings_obj: Any,
+    user_id: str,
+    execution_id: str,
+    state_version: int,
+    code: str,
+    message: str,
+    document_id: str,
+    version: int,
+) -> bool:
+    """Fail the execution and its target version (M2 version-aware).
+
+    A first upload (version 1) fails the whole document so polling surfaces
+    the reason; a re-index only fails its own unpublished version row, so the
+    previously published version keeps serving (dev/03 lifecycle #1).
+    """
+    transitioned = transition_execution(
+        settings_obj,
+        user_id,
+        execution_id,
+        expected_state_version=state_version,
+        status="failed",
+        error=ExecutionError(code=code, message=message),
+    )
+    if transitioned:
+        if version == 1:
+            set_document_status(settings_obj, user_id, document_id, status="failed", error=message)
+        else:
+            set_version_failed(settings_obj, user_id, document_id, version, error=message)
+    return transitioned
+
+
 def run_indexing(
     settings_obj: Any,
     storage_key: str,
@@ -212,7 +260,7 @@ def run_indexing(
     try:
         raw = read_upload(settings_obj, storage_key)
     except OSError:
-        _fail(
+        _fail_index(
             settings_obj,
             user_id,
             execution_id,
@@ -220,10 +268,11 @@ def run_indexing(
             "FILE_READ_FAILED",
             "无法读取上传文件。",
             document_id,
+            version,
         )
         return
     if raw is None:
-        _fail(
+        _fail_index(
             settings_obj,
             user_id,
             execution_id,
@@ -231,6 +280,7 @@ def run_indexing(
             "FILE_MISSING",
             "上传文件丢失，请重新上传。",
             document_id,
+            version,
         )
         return
     if not transition_execution(
@@ -276,7 +326,7 @@ def run_indexing(
             indexed.chunks,
         )
     except Exception as exc:  # noqa: BLE001 - any pipeline failure must fail the execution
-        _fail(
+        _fail_index(
             settings_obj,
             user_id,
             execution_id,
@@ -284,6 +334,7 @@ def run_indexing(
             "INDEXING_FAILED",
             _public_index_error(exc),
             document_id,
+            version,
         )
         return
     transition_execution(
@@ -444,60 +495,273 @@ def run_analysis(settings_obj: Any, analysis_id: str, user_id: str, execution_id
     )
 
 
-@celery_app.task(name="careerpilot.purge_document")
-def purge_document_task(user_id: str, document_id: str) -> None:
-    """Asynchronously purge chunks, vectors and files for a soft-deleted document.
+@celery_app.task(name="careerpilot.purge_document", bind=True, max_retries=5)
+def purge_document_task(self: Any, user_id: str, document_id: str) -> None:
+    """Physically purge a soft-deleted document: chunks, vectors and files.
 
-    Idempotent: safe to retry. On partial failure the document's purge_status
-    is left at 'pending' so a sweeper can re-dispatch.
+    Every step is idempotent and ordered so retries are safe (dev/03 #3):
+    chunks are marked deleted first (they stop resolving immediately), then
+    Qdrant points are deleted by owner-scoped filter, then files are removed.
+    A retryable vector failure re-queues with backoff; after max retries the
+    document stays at purge_status=failed for the sweeper to re-dispatch.
     """
     try:
-        versions = list_document_versions(settings, user_id, document_id)
-        all_vector_ids: list[str] = []
-        for version_row in versions:
-            version = version_row["version"]
-            vector_ids = mark_chunks_deleted(settings, user_id, document_id, version)
-            all_vector_ids.extend(vector_ids)
-
-        if all_vector_ids:
-            try:
-                from app.rag.vector_store import get_vector_store
-
-                store = get_vector_store(settings)
-                asyncio.run(store.delete_by_ids(all_vector_ids))
-            except ImportError:
-                logging.getLogger(__name__).warning(
-                    "vector store not available; skipping vector purge for %s", document_id
-                )
-            except Exception:
-                logging.getLogger(__name__).exception("vector purge failed for %s", document_id)
-                set_purge_status(settings, user_id, document_id, status="failed")
-                return
-
-        try:
-            from app.services.storage import remove_upload
-
-            # The upload key lives on the document row; fetch it once.
-            from app.services.documents import database_connection
-
-            with database_connection(settings) as database:
-                doc = database.documents.find_one({"id": document_id, "user_id": user_id}, {"_id": 0})
-            if doc and doc.get("storage_key"):
-                remove_upload(settings, doc["storage_key"])
-            # Best-effort: remove extracted text/pages too.
-            extracted_dir = f"extracted/{user_id}/{document_id}"
-            from pathlib import Path
-
-            root = settings.local_storage_dir.resolve()
-            extracted_path = (root / extracted_dir).resolve()
-            if extracted_path.exists() and root in extracted_path.parents:
-                import shutil
-
-                shutil.rmtree(extracted_path, ignore_errors=True)
-        except OSError:
-            logging.getLogger(__name__).exception("file purge failed for %s", document_id)
-
-        set_purge_status(settings, user_id, document_id, status="done")
-    except Exception:
+        _run_purge(settings, user_id, document_id)
+    except Exception as exc:  # noqa: BLE001 - classified below
+        retryable = getattr(exc, "retryable", True)
+        if retryable and self.request.retries < self.max_retries:
+            countdown = 60 * (2**self.request.retries)
+            logging.getLogger(__name__).warning(
+                "purge of %s failed (attempt %s), retrying in %ss",
+                document_id,
+                self.request.retries + 1,
+                countdown,
+            )
+            raise self.retry(exc=exc, countdown=countdown) from exc
         logging.getLogger(__name__).exception("purge_document failed for %s", document_id)
         set_purge_status(settings, user_id, document_id, status="failed")
+
+
+def _run_purge(settings_obj: Any, user_id: str, document_id: str) -> None:
+    """Synchronous purge core, separated for direct testing."""
+    document = get_deleted_document(settings_obj, user_id, document_id)
+    if document is None:
+        # Already purged or never existed: the goal state is reached.
+        return
+    storage_keys: list[str] = []
+    for version_row in list_document_versions(settings_obj, user_id, document_id):
+        mark_chunks_deleted(settings_obj, user_id, document_id, version_row["version"])
+        for key_field in ("extracted_text_key", "source_key"):
+            key = version_row.get(key_field)
+            if isinstance(key, str) and key and key != document.get("storage_key"):
+                storage_keys.append(key)
+    store = _load_vector_store()(settings_obj)
+    asyncio.run(store.delete_document_points(user_id=user_id, document_id=document_id))
+    if document.get("storage_key"):
+        remove_upload(settings_obj, document["storage_key"])
+    remove_extracted_versions(settings_obj, user_id, document_id, storage_keys)
+    set_purge_status(settings_obj, user_id, document_id, status="done")
+
+
+def _load_plan_generator() -> Any:
+    """Import member D's planner lazily; raises when it is not integrated yet.
+
+    B↔D contract proposal (issue #26): ``app.agent.plan`` exposes an async
+    ``generate_plan_draft(*, user_id, plan, analysis, settings)`` returning an
+    object with ``draft_tasks``, ``interrupt_id`` and ``checkpoint_id``.
+    """
+    try:
+        from app.agent.plan import generate_plan_draft
+    except ImportError as exc:
+        raise RuntimeError("计划生成模块（app.agent.plan，成员 D）尚未集成") from exc
+    return generate_plan_draft
+
+
+def _load_resume_handler() -> Any:
+    """Import member D's resume entry lazily; raises when not integrated yet.
+
+    B↔D contract proposal (issue #26): ``app.agent.resume`` exposes an async
+    ``resume_execution(*, user_id, execution_id, resume_input, settings)``
+    that drives the graph to its next pause or terminal state and returns the
+    resulting status ("waiting_for_input" | "succeeded" | "failed") with an
+    optional error message.
+    """
+    try:
+        from app.agent.resume import resume_execution
+    except ImportError as exc:
+        raise RuntimeError("执行恢复模块（app.agent.resume，成员 D）尚未集成") from exc
+    return resume_execution
+
+
+@celery_app.task(name="careerpilot.run_plan")
+def run_plan_task(
+    dispatch_id: str, user_id: str, execution_id: str, expected_state_version: int
+) -> None:
+    """Generate the plan draft for one execution (outbox-dispatched, M2)."""
+    with _heartbeat(settings, user_id, execution_id):
+        run_plan(settings, dispatch_id, user_id, execution_id, expected_state_version)
+
+
+def run_plan(
+    settings_obj: Any,
+    dispatch_id: str,
+    user_id: str,
+    execution_id: str,
+    expected_state_version: int,
+) -> None:
+    """Synchronous core of the plan task; the state claim discards duplicates."""
+    if not transition_execution(
+        settings_obj,
+        user_id,
+        execution_id,
+        expected_state_version=expected_state_version,
+        status="running",
+        stage="planning",
+    ):
+        return
+    try:
+        plan = get_plan_by_execution(settings_obj, user_id, execution_id)
+        if plan is None:
+            transition_execution(
+                settings_obj,
+                user_id,
+                execution_id,
+                expected_state_version=expected_state_version + 1,
+                status="failed",
+                error=ExecutionError(code="PLAN_MISSING", message="计划记录不存在。"),
+            )
+            return
+        analysis = get_analysis(settings_obj, user_id, plan["analysis_id"])
+        if analysis is None or analysis.get("status") != "ready":
+            transition_execution(
+                settings_obj,
+                user_id,
+                execution_id,
+                expected_state_version=expected_state_version + 1,
+                status="failed",
+                error=ExecutionError(
+                    code="PLAN_SOURCE_UNAVAILABLE", message="分析来源不可用，请重新生成计划。"
+                ),
+            )
+            return
+        generate_plan_draft = _load_plan_generator()
+        draft = asyncio.run(
+            generate_plan_draft(
+                user_id=user_id, plan=plan, analysis=analysis, settings=settings_obj
+            )
+        )
+        draft_tasks = [dict(task) for task in draft.draft_tasks]
+        if not draft_tasks:
+            raise RuntimeError("计划生成模块返回了空草稿")
+        if not save_plan_draft(settings_obj, user_id, plan["id"], draft_tasks=draft_tasks):
+            raise RuntimeError("计划草稿保存失败：计划状态已变化。")
+    except Exception as exc:  # noqa: BLE001 - any failure must fail the execution
+        transition_execution(
+            settings_obj,
+            user_id,
+            execution_id,
+            expected_state_version=expected_state_version + 1,
+            status="failed",
+            error=ExecutionError(code="PLAN_GENERATION_FAILED", message=_public_plan_error(exc)),
+        )
+        return
+    interrupt_id = getattr(draft, "interrupt_id", None) or f"int_{uuid4().hex}"
+    checkpoint_id = getattr(draft, "checkpoint_id", None) or f"chk_{uuid4().hex}"
+    transition_to_waiting(
+        settings_obj,
+        user_id,
+        execution_id,
+        expected_state_version=expected_state_version + 1,
+        pending_input=PendingInput(
+            kind="plan_confirmation",
+            interrupt_id=interrupt_id,
+            checkpoint_id=checkpoint_id,
+            plan_id=plan["id"],
+        ),
+        stage="awaiting_plan_confirmation",
+    )
+
+
+def _public_plan_error(error: Exception) -> str:
+    """Fixed user-facing plan errors; never echo exception details."""
+    message = str(error)
+    if "尚未集成" in message:
+        return "计划生成功能尚未集成，请等待后续版本。"
+    if "空草稿" in message:
+        return "计划生成失败：未产生可排期的任务，请调整目标后重试。"
+    return "计划生成失败，请稍后重试或联系管理员。"
+
+
+@celery_app.task(name="careerpilot.resume_execution")
+def resume_execution_task(
+    dispatch_id: str, user_id: str, execution_id: str, expected_state_version: int
+) -> None:
+    """Resume a paused execution from its recorded input (outbox, M2)."""
+    with _heartbeat(settings, user_id, execution_id):
+        run_resume(settings, dispatch_id, user_id, execution_id, expected_state_version)
+
+
+def run_resume(
+    settings_obj: Any,
+    dispatch_id: str,
+    user_id: str,
+    execution_id: str,
+    expected_state_version: int,
+) -> None:
+    """Synchronous resume core; the state claim discards duplicate deliveries."""
+    if not transition_execution(
+        settings_obj,
+        user_id,
+        execution_id,
+        expected_state_version=expected_state_version,
+        status="running",
+        stage="resuming",
+    ):
+        return
+    try:
+        dispatch = get_dispatch(settings_obj, dispatch_id)
+        resume_input = (
+            load_input_by_id(settings_obj, user_id, dispatch["input_ref"])
+            if dispatch is not None and dispatch.get("input_ref")
+            else None
+        )
+        if resume_input is None:
+            raise RuntimeError("恢复输入记录不存在，无法安全恢复。")
+        resume_execution = _load_resume_handler()
+        outcome = asyncio.run(
+            resume_execution(
+                user_id=user_id,
+                execution_id=execution_id,
+                resume_input=resume_input,
+                settings=settings_obj,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - any failure must fail the execution
+        message = str(exc)
+        if "尚未集成" in message:
+            message = "执行恢复功能尚未集成，请等待后续版本。"
+        else:
+            message = "恢复执行失败，请稍后重试或联系管理员。"
+        transition_execution(
+            settings_obj,
+            user_id,
+            execution_id,
+            expected_state_version=expected_state_version + 1,
+            status="failed",
+            error=ExecutionError(code="RESUME_FAILED", message=message),
+        )
+        return
+    # D's handler reports the graph outcome; B persists the state transition.
+    outcome_status = getattr(outcome, "status", None)
+    state_version = expected_state_version + 1
+    if outcome_status == "waiting_for_input":
+        pending = getattr(outcome, "pending_input", None)
+        transition_to_waiting(
+            settings_obj,
+            user_id,
+            execution_id,
+            expected_state_version=state_version,
+            pending_input=PendingInput.model_validate(pending),
+        )
+    elif outcome_status == "succeeded":
+        transition_execution(
+            settings_obj,
+            user_id,
+            execution_id,
+            expected_state_version=state_version,
+            status="succeeded",
+            result_type=getattr(outcome, "result_type", None),
+            result_id=getattr(outcome, "result_id", None),
+        )
+    else:
+        transition_execution(
+            settings_obj,
+            user_id,
+            execution_id,
+            expected_state_version=state_version,
+            status="failed",
+            error=ExecutionError(
+                code="RESUME_FAILED",
+                message=getattr(outcome, "error_message", None) or "恢复执行失败，请重试。",
+            ),
+        )

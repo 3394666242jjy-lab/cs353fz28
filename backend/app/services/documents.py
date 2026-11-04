@@ -6,6 +6,7 @@ indexer result (see issue #8); this module is the authority that C's pipeline
 persists into and that D's evidence assembly reads from.
 """
 
+import json
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
@@ -83,6 +84,7 @@ def create_document(
                 "user_id": user_id,
                 "document_id": document_id,
                 "version": 1,
+                "source_key": storage_key,
                 "extracted_text_key": None,
                 "content_hash": None,
                 "parser_version": None,
@@ -394,24 +396,232 @@ def mark_chunks_deleted(
         _ensure_indexes(database)
         rows = list(
             database.chunks.find(
-                {"document_id": document_id, "version": version, "user_id": user_id, "deleted_at": None},
+                {
+                    "document_id": document_id,
+                    "version": version,
+                    "user_id": user_id,
+                    "deleted_at": None,
+                },
                 {"_id": 0, "vector_id": 1},
             )
         )
         vector_ids = [row["vector_id"] for row in rows if row.get("vector_id")]
         database.chunks.update_many(
-            {"document_id": document_id, "version": version, "user_id": user_id, "deleted_at": None},
+            {
+                "document_id": document_id,
+                "version": version,
+                "user_id": user_id,
+                "deleted_at": None,
+            },
             {"$set": {"deleted_at": datetime.now(UTC)}},
         )
     return vector_ids
 
 
-def set_purge_status(
-    settings: Settings, user_id: str, document_id: str, *, status: str
-) -> None:
+def set_purge_status(settings: Settings, user_id: str, document_id: str, *, status: str) -> None:
     """Record purge outcome so failed cleanup can be retried."""
     with database_connection(settings) as database:
         database.documents.update_one(
             {"id": document_id, "user_id": user_id},
             {"$set": {"purge_status": status, "updated_at": datetime.now(UTC)}},
         )
+
+
+def create_text_version(
+    settings: Settings,
+    user_id: str,
+    document_id: str,
+    *,
+    expected_version: int,
+    source_key: str,
+) -> int | None:
+    """Open the next version for an edited text, guarded by expected_version.
+
+    Returns the new version number, or None when the document is missing,
+    deleted, not ready or the expected version is stale (409 VERSION_CONFLICT).
+    The document stays on the published version until the new one is fully
+    indexed (dev/03 lifecycle #1).
+    """
+    now = datetime.now(UTC)
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        document = database.documents.find_one(
+            {
+                "id": document_id,
+                "user_id": user_id,
+                "deleted_at": None,
+                "status": "ready",
+                "current_version": expected_version,
+            },
+            {"_id": 0, "current_version": 1},
+        )
+        if document is None:
+            return None
+        new_version = document["current_version"] + 1
+        database.document_versions.insert_one(
+            {
+                "id": f"dver_{uuid4().hex}",
+                "user_id": user_id,
+                "document_id": document_id,
+                "version": new_version,
+                "source_key": source_key,
+                "extracted_text_key": None,
+                "content_hash": None,
+                "parser_version": None,
+                "chunking_config_version": None,
+                "embedding_model": None,
+                "embedding_dimension": None,
+                "index_version": None,
+                "status": "uploaded",
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    return new_version
+
+
+def get_version_row(
+    settings: Settings, user_id: str, document_id: str, version: int
+) -> dict[str, Any] | None:
+    """Return one version row owned by the user, or None."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        row = database.document_versions.find_one(
+            {"document_id": document_id, "user_id": user_id, "version": version}, {"_id": 0}
+        )
+    return row
+
+
+def set_version_failed(
+    settings: Settings,
+    user_id: str,
+    document_id: str,
+    version: int,
+    *,
+    error: str,
+) -> bool:
+    """Mark an unpublished version failed; published versions are immutable."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        result = database.document_versions.update_one(
+            {
+                "document_id": document_id,
+                "user_id": user_id,
+                "version": version,
+                "status": {"$in": ["uploaded", "writing"]},
+            },
+            {"$set": {"status": "failed", "error": error, "updated_at": datetime.now(UTC)}},
+        )
+    return result.matched_count == 1
+
+
+def find_active_index_execution(
+    settings: Settings, user_id: str, document_id: str, version: int
+) -> str | None:
+    """Return the queued/running index execution for one version, if any.
+
+    POST /documents/{id}/reindex reuses it instead of stacking duplicate
+    indexing work on the same version (dev/04).
+    """
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        row = database.executions.find_one(
+            {
+                "user_id": user_id,
+                "type": "index",
+                "resource_id": document_id,
+                "resource_version": version,
+                "status": {"$in": ["queued", "running"]},
+            },
+            {"_id": 0, "id": 1},
+        )
+    return row["id"] if row is not None else None
+
+
+def get_deleted_document(
+    settings: Settings, user_id: str, document_id: str
+) -> dict[str, Any] | None:
+    """Purge-side lookup: the deleted document row including storage keys."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        row = database.documents.find_one(
+            {"id": document_id, "user_id": user_id, "status": "deleted"}, {"_id": 0}
+        )
+    return row
+
+
+def list_purge_candidates(
+    settings: Settings, *, before: datetime, limit: int = 20
+) -> list[dict[str, Any]]:
+    """Deleted documents whose purge is unfinished and due for a retry."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        rows = list(
+            database.documents.find(
+                {
+                    "status": "deleted",
+                    "purge_status": {"$in": ["pending", "failed"]},
+                    "updated_at": {"$lte": before},
+                },
+                {"_id": 0, "id": 1, "user_id": 1},
+            )
+            .sort("updated_at", 1)
+            .limit(limit)
+        )
+    return rows
+
+
+def get_document_source_key(settings: Settings, user_id: str, document_id: str) -> str | None:
+    """Return the original upload key of a live document (reindex fallback)."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        row = database.documents.find_one(
+            {"id": document_id, "user_id": user_id, "deleted_at": None},
+            {"_id": 0, "storage_key": 1},
+        )
+    return row.get("storage_key") if row else None
+
+
+def load_current_extraction(
+    settings: Settings, user_id: str, document_id: str
+) -> dict[str, Any] | None:
+    """Read the published version's extraction object for preview (dev/04).
+
+    Returns {"kind": "text", "text": ...} for TXT/Markdown sources or
+    {"kind": "pdf", "pages": [{"page", "text"}, ...]} for PDFs; None when no
+    extraction has been published yet or the object is gone.
+    """
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        document = database.documents.find_one(
+            {"id": document_id, "user_id": user_id, "deleted_at": None},
+            {"_id": 0, "current_version": 1},
+        )
+        if document is None:
+            return None
+        version = database.document_versions.find_one(
+            {
+                "document_id": document_id,
+                "user_id": user_id,
+                "version": document["current_version"],
+                "status": "ready",
+            },
+            {"_id": 0, "extracted_text_key": 1},
+        )
+    if version is None or not version.get("extracted_text_key"):
+        return None
+    from app.services.storage import read_text_object
+
+    raw = read_text_object(settings, version["extracted_text_key"])
+    if raw is None:
+        return None
+    if str(version["extracted_text_key"]).endswith(".json"):
+        try:
+            payload = json.loads(raw)
+        except ValueError:
+            return None
+        pages = payload.get("pages")
+        if isinstance(pages, list):
+            return {"kind": "pdf", "pages": pages}
+        return None
+    return {"kind": "text", "text": raw}
