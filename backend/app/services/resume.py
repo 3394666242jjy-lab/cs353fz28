@@ -13,10 +13,16 @@ from typing import Any
 from app.config import Settings
 from app.schemas.resources import ResumeAnswer
 from app.services.database import transactional_connection
-from app.services.dispatch import enqueue_dispatch, publish_dispatch
+from app.services.dispatch import (
+    enqueue_dispatch,
+    ensure_dispatch_indexes,
+    publish_dispatch,
+)
+from app.services.executions import ensure_execution_indexes
 from app.services.inputs import (
     InputConflictError,
     answer_content_hash,
+    ensure_input_indexes,
     get_execution_input,
     record_execution_input,
 )
@@ -63,6 +69,10 @@ def resume_execution(
         raise InputConflictError(interrupt_id)
     now = datetime.now(UTC)
     dispatch_id: str | None = None
+    # Index creation must commit before the transaction starts.
+    ensure_execution_indexes(settings)
+    ensure_input_indexes(settings)
+    ensure_dispatch_indexes(settings)
     with transactional_connection(settings) as (database, session):
         execution = database.executions.find_one(
             {"id": execution_id, "user_id": user_id}, {"_id": 0}, session=session

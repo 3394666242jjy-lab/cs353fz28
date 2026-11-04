@@ -115,6 +115,13 @@ def confirm_mocks(settings, monkeypatch):
     session = MagicMock(name="session")
     connection.return_value.__enter__.return_value = (db := MagicMock(), session)
     monkeypatch.setattr("app.services.plans.transactional_connection", connection)
+    for name in (
+        "ensure_plan_indexes",
+        "ensure_execution_indexes",
+        "ensure_input_indexes",
+        "ensure_dispatch_indexes",
+    ):
+        monkeypatch.setattr(f"app.services.plans.{name}", lambda *a: None)
     db.executions.find_one.return_value = _waiting_execution()
     db.plans.update_one.return_value.matched_count = 1
     db.executions.update_one.return_value.matched_count = 1

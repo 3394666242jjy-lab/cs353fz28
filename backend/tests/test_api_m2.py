@@ -399,6 +399,12 @@ def test_create_plan_commits_execution_and_outbox_in_transaction(client, monkeyp
     connection = MagicMock()
     connection.return_value.__enter__.return_value = (MagicMock(), MagicMock())
     monkeypatch.setattr("app.api.routes.transactional_connection", connection)
+    for name in (
+        "ensure_plan_indexes",
+        "ensure_execution_indexes",
+        "ensure_dispatch_indexes",
+    ):
+        monkeypatch.setattr(f"app.api.routes.{name}", lambda *a: None)
     monkeypatch.setattr("app.api.routes.create_plan_record", lambda *a, **k: "plan_1")
     monkeypatch.setattr("app.api.routes.insert_execution", lambda *a, **k: "exec_plan")
     monkeypatch.setattr("app.api.routes.attach_plan_execution", lambda *a, **k: None)

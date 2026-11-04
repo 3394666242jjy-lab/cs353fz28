@@ -21,6 +21,12 @@ def mocks(settings, monkeypatch):
     session = MagicMock(name="session")
     connection.return_value.__enter__.return_value = (db := MagicMock(), session)
     monkeypatch.setattr("app.services.resume.transactional_connection", connection)
+    for name in (
+        "ensure_execution_indexes",
+        "ensure_input_indexes",
+        "ensure_dispatch_indexes",
+    ):
+        monkeypatch.setattr(f"app.services.resume.{name}", lambda *a: None)
     recorded = {}
     monkeypatch.setattr(
         "app.services.resume.record_execution_input",

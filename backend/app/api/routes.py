@@ -54,7 +54,7 @@ from app.services.analyses import create_analysis as analyses_create
 from app.services.analyses import get_analysis as analyses_get
 from app.services.auth import login_user
 from app.services.database import transactional_connection
-from app.services.dispatch import enqueue_dispatch, publish_dispatch
+from app.services.dispatch import enqueue_dispatch, ensure_dispatch_indexes, publish_dispatch
 from app.services.documents import (
     create_document,
     create_text_version,
@@ -73,6 +73,7 @@ from app.services.events import get_event_sequence, list_events
 from app.services.executions import (
     ExecutionCreate,
     create_execution,
+    ensure_execution_indexes,
     insert_execution,
     recover_document_execution,
     transition_execution,
@@ -87,6 +88,7 @@ from app.services.plans import (
     attach_plan_execution,
     confirm_plan,
     create_plan_record,
+    ensure_plan_indexes,
     get_plan,
     list_plan_tasks,
     update_plan_task_status,
@@ -1147,6 +1149,10 @@ def create_plan(
             },
         )
     try:
+        # Index creation must commit before the transaction starts.
+        ensure_plan_indexes(settings)
+        ensure_execution_indexes(settings)
+        ensure_dispatch_indexes(settings)
         with transactional_connection(settings) as (database, session):
             plan_id = create_plan_record(
                 database,

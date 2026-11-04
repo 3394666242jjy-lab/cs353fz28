@@ -29,9 +29,19 @@ COMMAND_TASKS = {
 
 
 def _ensure_indexes(database: Database[dict[str, Any]]) -> None:
-    """Create M2 indexes per dev/03; safe to repeat on every call."""
+    """Create M2 indexes per dev/03; safe to repeat on every call.
+
+    Never call this inside an open transaction; use
+    :func:`ensure_dispatch_indexes` before opening one.
+    """
     database.dispatch_events.create_index("id", unique=True)
     database.dispatch_events.create_index([("status", 1), ("created_at", 1)])
+
+
+def ensure_dispatch_indexes(settings: Settings) -> None:
+    """Create the indexes outside any transaction; call before opening one."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
 
 
 def enqueue_dispatch(
@@ -44,10 +54,12 @@ def enqueue_dispatch(
     input_ref: str | None = None,
     session: Any = None,
 ) -> str:
-    """Insert one pending dispatch row inside the caller's transaction."""
+    """Insert one pending dispatch row inside the caller's transaction.
+
+    The caller must have run :func:`ensure_dispatch_indexes` beforehand.
+    """
     if command not in COMMAND_TASKS:
         raise ValueError(f"Unknown dispatch command: {command}")
-    _ensure_indexes(database)
     dispatch_id = f"disp_{uuid4().hex}"
     database.dispatch_events.insert_one(
         {

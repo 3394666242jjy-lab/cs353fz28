@@ -26,9 +26,19 @@ class InputConflictError(RuntimeError):
 
 
 def _ensure_indexes(database: Database[dict[str, Any]]) -> None:
-    """Create M2 indexes per dev/03; safe to repeat on every call."""
+    """Create M2 indexes per dev/03; safe to repeat on every call.
+
+    Never call this inside an open transaction; use
+    :func:`ensure_input_indexes` before opening one.
+    """
     database.execution_inputs.create_index("id", unique=True)
     database.execution_inputs.create_index([("execution_id", 1), ("interrupt_id", 1)], unique=True)
+
+
+def ensure_input_indexes(settings: Settings) -> None:
+    """Create the indexes outside any transaction; call before opening one."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
 
 
 def answer_content_hash(answer: dict[str, Any]) -> str:
@@ -53,8 +63,9 @@ def record_execution_input(
 
     Idempotent: a replay with identical content returns the existing row id.
     A replay with different content raises InputConflictError.
+
+    The caller must have run :func:`ensure_input_indexes` beforehand.
     """
-    _ensure_indexes(database)
     content_hash = answer_content_hash(answer)
     input_id = f"inp_{uuid4().hex}"
     try:

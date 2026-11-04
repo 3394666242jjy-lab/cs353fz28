@@ -16,18 +16,24 @@ from app.services import dispatch as dispatch_service
 from app.services.database import database_connection, transactional_connection
 from app.services.dispatch import (
     enqueue_dispatch,
+    ensure_dispatch_indexes,
     get_dispatch,
     publish_dispatch,
     sweep_pending_dispatches,
 )
 from app.services.events import append_event, count_events, get_event_sequence, list_events
-from app.services.executions import ExecutionCreate, insert_execution
+from app.services.executions import (
+    ExecutionCreate,
+    ensure_execution_indexes,
+    insert_execution,
+)
 from app.services.inputs import get_execution_input
 from app.services.plans import (
     PlanStateError,
     attach_plan_execution,
     confirm_plan,
     create_plan_record,
+    ensure_plan_indexes,
     get_plan,
     list_plan_tasks,
     save_plan_draft,
@@ -51,6 +57,8 @@ def settings():
 
 def _draft_plan(settings, user_id: str) -> tuple[str, str]:
     """Create a draft plan with a waiting execution; return (plan_id, execution_id)."""
+    ensure_plan_indexes(settings)
+    ensure_execution_indexes(settings)
     with transactional_connection(settings) as (database, session):
         plan_id = create_plan_record(
             database,
@@ -154,6 +162,7 @@ def test_confirm_plan_rejects_other_users(settings):
 def test_events_have_gapless_sequences_and_retention(settings):
     settings.event_history_retention_count = 3
     user_id = f"user_{uuid4().hex}"
+    ensure_execution_indexes(settings)
     with database_connection(settings) as database:
         execution_id = insert_execution(
             database, user_id, ExecutionCreate(type="analysis", resource_id="analysis_1")
@@ -182,6 +191,8 @@ def test_events_have_gapless_sequences_and_retention(settings):
 
 def test_dispatch_outbox_publish_failure_and_sweep(settings, monkeypatch):
     user_id = f"user_{uuid4().hex}"
+    ensure_execution_indexes(settings)
+    ensure_dispatch_indexes(settings)
     with database_connection(settings) as database:
         execution_id = insert_execution(
             database, user_id, ExecutionCreate(type="plan", resource_id="plan_x")

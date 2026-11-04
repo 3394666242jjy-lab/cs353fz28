@@ -18,8 +18,13 @@ from pymongo.database import Database
 
 from app.config import Settings
 from app.services.database import database_connection, transactional_connection
-from app.services.dispatch import enqueue_dispatch, publish_dispatch
-from app.services.inputs import InputConflictError, record_execution_input
+from app.services.dispatch import enqueue_dispatch, ensure_dispatch_indexes, publish_dispatch
+from app.services.executions import ensure_execution_indexes
+from app.services.inputs import (
+    InputConflictError,
+    ensure_input_indexes,
+    record_execution_input,
+)
 
 TASK_STATUSES = {"todo", "in_progress", "done"}
 
@@ -50,11 +55,21 @@ class _ConcurrentConfirm(Exception):
 
 
 def _ensure_indexes(database: Database[dict[str, Any]]) -> None:
-    """Create M2 indexes per dev/03; safe to repeat on every call."""
+    """Create M2 indexes per dev/03; safe to repeat on every call.
+
+    Never call this inside an open transaction; use
+    :func:`ensure_plan_indexes` before opening one.
+    """
     database.plans.create_index("id", unique=True)
     database.plans.create_index([("user_id", 1), ("created_at", -1)])
     database.plan_tasks.create_index("id", unique=True)
     database.plan_tasks.create_index([("plan_id", 1), ("id", 1)], unique=True)
+
+
+def ensure_plan_indexes(settings: Settings) -> None:
+    """Create the indexes outside any transaction; call before opening one."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
 
 
 def validate_timezone(timezone: str) -> ZoneInfo:
@@ -120,8 +135,10 @@ def create_plan_record(
     daily_minutes: int,
     session: Any = None,
 ) -> str:
-    """Insert the draft plan row inside the caller's transaction."""
-    _ensure_indexes(database)
+    """Insert the draft plan row inside the caller's transaction.
+
+    The caller must have run :func:`ensure_plan_indexes` beforehand.
+    """
     plan_id = f"plan_{uuid4().hex}"
     now = datetime.now(UTC)
     database.plans.insert_one(
@@ -282,6 +299,11 @@ def confirm_plan(
     )
     now = datetime.now(UTC)
     dispatch_id: str | None = None
+    # Index creation must commit before the transaction starts.
+    ensure_plan_indexes(settings)
+    ensure_execution_indexes(settings)
+    ensure_input_indexes(settings)
+    ensure_dispatch_indexes(settings)
     try:
         with transactional_connection(settings) as (database, session):
             execution = database.executions.find_one(
@@ -407,6 +429,7 @@ def update_plan_task_status(
 
 __all__ = [
     "InputConflictError",
+    "ensure_plan_indexes",
     "PlanInfeasibleError",
     "PlanStaleError",
     "PlanStateError",

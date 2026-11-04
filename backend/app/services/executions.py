@@ -26,13 +26,24 @@ class ExecutionCreate(ContractModel):
 
 
 def _ensure_indexes(database: Database[dict[str, Any]]) -> None:
-    """Create M1 indexes per dev/03; safe to repeat on every call."""
+    """Create M1 indexes per dev/03; safe to repeat on every call.
+
+    Never call this inside an open transaction: index/collection creation
+    must commit before the transaction starts (WriteConflict otherwise).
+    Use :func:`ensure_execution_indexes` before opening one.
+    """
     database.executions.create_index("id", unique=True)
     database.executions.create_index([("user_id", 1), ("created_at", -1)])
     database.executions.create_index([("status", 1), ("created_at", -1)])
     database.executions.create_index(
         [("user_id", 1), ("type", 1), ("resource_id", 1), ("status", 1)]
     )
+
+
+def ensure_execution_indexes(settings: Settings) -> None:
+    """Create the indexes outside any transaction; call before opening one."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
 
 
 def insert_execution(
@@ -42,7 +53,11 @@ def insert_execution(
     *,
     session: Any = None,
 ) -> str:
-    """Insert one queued execution inside the caller's (transactional) scope."""
+    """Insert one queued execution inside the caller's (transactional) scope.
+
+    The caller must have run :func:`ensure_execution_indexes` beforehand;
+    creating indexes inside the transaction races its snapshot.
+    """
     payload = ExecutionCreate.model_validate(payload)
     execution_id = f"exec_{uuid4().hex}"
     now = datetime.now(UTC)
@@ -64,7 +79,6 @@ def insert_execution(
     }
     if payload.resource_version is not None:
         row["resource_version"] = payload.resource_version
-    _ensure_indexes(database)
     database.executions.insert_one(row, session=session)
     return execution_id
 
@@ -72,6 +86,7 @@ def insert_execution(
 def create_execution(settings: Settings, user_id: str, payload: ExecutionCreate) -> str:
     """Queue a new execution at state_version 1."""
     with database_connection(settings) as database:
+        _ensure_indexes(database)
         return insert_execution(database, user_id, payload)
 
 
