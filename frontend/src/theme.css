@@ -616,6 +616,122 @@ input[type='file']::file-selector-button:hover {
   font-weight: 500;
 }
 
+/* ---------- 资料管理（M2） ---------- */
+
+.document-manager {
+  margin-top: 26px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.manager-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 18px;
+  margin-top: 16px;
+  align-items: start;
+}
+
+.manager-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.manager-list li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  overflow: hidden;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.manager-list li.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+.manager-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  background: none;
+  border: 0;
+  text-align: left;
+  color: var(--ink);
+}
+
+.manager-open:hover {
+  background: var(--surface-2);
+}
+
+.manager-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.manager-detail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #fff;
+  padding: 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.manager-detail textarea {
+  min-height: 220px;
+  margin-top: 10px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.manager-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.notice-text {
+  color: var(--success);
+  background: var(--success-bg);
+  border: 1px solid rgba(4, 120, 87, 0.16);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.error-text {
+  color: var(--danger);
+}
+
+.secondary-button.danger {
+  color: var(--danger);
+  border-color: #fecdd3;
+  background: var(--danger-bg);
+}
+
+.secondary-button.danger:hover {
+  border-color: var(--danger);
+  background: #ffe4e6;
+}
+
+@media (max-width: 850px) {
+  .manager-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------- 分析与证据 ---------- */
 
 .jd-analysis {

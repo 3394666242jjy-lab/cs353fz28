@@ -4,6 +4,7 @@ import { describeError } from './api/errors';
 import { sampleInputs } from './api/fixtures';
 import StatusBadge from './components/StatusBadge';
 import AnalysisPanel from './pages/AnalysisPanel';
+import DocumentManager from './pages/DocumentManager';
 import DocumentUpload from './pages/DocumentUpload';
 import JdImport from './pages/JdImport';
 
@@ -385,6 +386,7 @@ export default function App() {
                 </button>
               </div>
             </div>
+            <DocumentManager userId={user?.id} />
             <div className="footnote">
               原始资料、片段与结论分开保存。缺少证据时，系统应如实标记“资料未体现”。
             </div>
