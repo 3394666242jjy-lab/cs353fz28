@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import TypeAdapter
 from pymongo.errors import PyMongoError
 
@@ -38,6 +39,7 @@ from app.services.documents import create_document, set_document_status
 from app.services.documents import get_chunk as chunks_get
 from app.services.documents import get_document as documents_get
 from app.services.documents import list_documents as documents_list
+from app.services.documents import soft_delete_document
 from app.services.executions import (
     ExecutionCreate,
     create_execution,
@@ -47,7 +49,7 @@ from app.services.executions import (
 from app.services.executions import get_execution as executions_get
 from app.services.jobs import load_job, save_job
 from app.services.storage import remove_upload, save_upload
-from app.services.tasks import dispatch_analysis_task, dispatch_index_task
+from app.services.tasks import dispatch_analysis_task, dispatch_index_task, dispatch_purge_task
 
 router = APIRouter(
     prefix="/api/v1",
@@ -264,6 +266,41 @@ def get_document(
             detail={"code": "NOT_FOUND", "message": "资料不存在或不属于当前用户。"},
         )
     return Envelope(data=document, request_id=request.state.request_id)
+
+
+@router.delete(
+    "/documents/{document_id}",
+    status_code=204,
+    tags=["documents"],
+    responses=AUTH_ERRORS | {404: {"model": ErrorEnvelope, "description": "Document not found"}},
+)
+def delete_document(
+    document_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    """Soft-delete a document: it becomes immediately unreadable and unsearchable.
+
+    Chunks, vectors and files are purged asynchronously; a failed purge leaves
+    the document in purge_status=pending and can be retried by the worker.
+    """
+    try:
+        row = soft_delete_document(settings, user.id, document_id)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "资料不存在或不属于当前用户。"},
+        )
+    try:
+        dispatch_purge_task(settings, user_id=user.id, document_id=document_id)
+    except Exception:
+        # Best-effort: the document is already invisible; purge can be retried
+        # by a sweeper job or the user re-deleting (idempotent).
+        pass
+    return JSONResponse(status_code=204, content=None)
 
 
 @router.post(

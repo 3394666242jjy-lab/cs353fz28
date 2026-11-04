@@ -41,3 +41,18 @@ def dispatch_analysis_task(
         "careerpilot.run_analysis",
         args=[analysis_id, user_id, execution_id],
     )
+
+
+def dispatch_purge_task(
+    settings: Settings,
+    *,
+    user_id: str,
+    document_id: str,
+) -> None:
+    """Enqueue asynchronous purge of chunks, vectors and files for a deleted document."""
+    from app.worker import celery_app
+
+    celery_app.send_task(
+        "careerpilot.purge_document",
+        args=[user_id, document_id],
+    )

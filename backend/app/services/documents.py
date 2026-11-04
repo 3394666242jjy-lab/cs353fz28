@@ -12,6 +12,7 @@ from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
 
 from pydantic import Field
+from pymongo import ReturnDocument
 from pymongo.database import Database
 
 from app.config import Settings
@@ -334,3 +335,83 @@ def list_chunks_by_ids(
             )
         )
     return rows
+
+
+def soft_delete_document(
+    settings: Settings, user_id: str, document_id: str
+) -> dict[str, Any] | None:
+    """Mark a document as deleted so it is immediately invisible to queries.
+
+    Returns the deleted document row (including storage_key and version info)
+    so the caller can enqueue an asynchronous purge of chunks, vectors and
+    files. Idempotent: deleting an already-deleted document returns None.
+    """
+    now = datetime.now(UTC)
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        row = database.documents.find_one_and_update(
+            {
+                "id": document_id,
+                "user_id": user_id,
+                "deleted_at": None,
+                "status": {"$ne": "deleted"},
+            },
+            {
+                "$set": {
+                    "status": "deleted",
+                    "deleted_at": now,
+                    "purge_status": "pending",
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+    if row is None:
+        return None
+    return row
+
+
+def list_document_versions(
+    settings: Settings, user_id: str, document_id: str
+) -> list[dict[str, Any]]:
+    """Return all version rows for a document (including deleted ones)."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        rows = list(
+            database.document_versions.find(
+                {"document_id": document_id, "user_id": user_id},
+                {"_id": 0},
+            ).sort("version", 1)
+        )
+    return rows
+
+
+def mark_chunks_deleted(
+    settings: Settings, user_id: str, document_id: str, version: int
+) -> list[str]:
+    """Soft-delete chunks of a specific version; returns their vector_ids for removal."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        rows = list(
+            database.chunks.find(
+                {"document_id": document_id, "version": version, "user_id": user_id, "deleted_at": None},
+                {"_id": 0, "vector_id": 1},
+            )
+        )
+        vector_ids = [row["vector_id"] for row in rows if row.get("vector_id")]
+        database.chunks.update_many(
+            {"document_id": document_id, "version": version, "user_id": user_id, "deleted_at": None},
+            {"$set": {"deleted_at": datetime.now(UTC)}},
+        )
+    return vector_ids
+
+
+def set_purge_status(
+    settings: Settings, user_id: str, document_id: str, *, status: str
+) -> None:
+    """Record purge outcome so failed cleanup can be retried."""
+    with database_connection(settings) as database:
+        database.documents.update_one(
+            {"id": document_id, "user_id": user_id},
+            {"$set": {"purge_status": status, "updated_at": datetime.now(UTC)}},
+        )

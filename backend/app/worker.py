@@ -30,8 +30,11 @@ from app.services.documents import (
     IndexedVersionPayload,
     get_document,
     list_chunks_by_ids,
+    list_document_versions,
+    mark_chunks_deleted,
     save_indexed_version,
     set_document_status,
+    set_purge_status,
 )
 from app.services.executions import heartbeat_execution, transition_execution
 from app.services.jobs import load_job
@@ -439,3 +442,62 @@ def run_analysis(settings_obj: Any, analysis_id: str, user_id: str, execution_id
         result_type="analysis",
         result_id=analysis_id,
     )
+
+
+@celery_app.task(name="careerpilot.purge_document")
+def purge_document_task(user_id: str, document_id: str) -> None:
+    """Asynchronously purge chunks, vectors and files for a soft-deleted document.
+
+    Idempotent: safe to retry. On partial failure the document's purge_status
+    is left at 'pending' so a sweeper can re-dispatch.
+    """
+    try:
+        versions = list_document_versions(settings, user_id, document_id)
+        all_vector_ids: list[str] = []
+        for version_row in versions:
+            version = version_row["version"]
+            vector_ids = mark_chunks_deleted(settings, user_id, document_id, version)
+            all_vector_ids.extend(vector_ids)
+
+        if all_vector_ids:
+            try:
+                from app.rag.vector_store import get_vector_store
+
+                store = get_vector_store(settings)
+                asyncio.run(store.delete_by_ids(all_vector_ids))
+            except ImportError:
+                logging.getLogger(__name__).warning(
+                    "vector store not available; skipping vector purge for %s", document_id
+                )
+            except Exception:
+                logging.getLogger(__name__).exception("vector purge failed for %s", document_id)
+                set_purge_status(settings, user_id, document_id, status="failed")
+                return
+
+        try:
+            from app.services.storage import remove_upload
+
+            # The upload key lives on the document row; fetch it once.
+            from app.services.documents import database_connection
+
+            with database_connection(settings) as database:
+                doc = database.documents.find_one({"id": document_id, "user_id": user_id}, {"_id": 0})
+            if doc and doc.get("storage_key"):
+                remove_upload(settings, doc["storage_key"])
+            # Best-effort: remove extracted text/pages too.
+            extracted_dir = f"extracted/{user_id}/{document_id}"
+            from pathlib import Path
+
+            root = settings.local_storage_dir.resolve()
+            extracted_path = (root / extracted_dir).resolve()
+            if extracted_path.exists() and root in extracted_path.parents:
+                import shutil
+
+                shutil.rmtree(extracted_path, ignore_errors=True)
+        except OSError:
+            logging.getLogger(__name__).exception("file purge failed for %s", document_id)
+
+        set_purge_status(settings, user_id, document_id, status="done")
+    except Exception:
+        logging.getLogger(__name__).exception("purge_document failed for %s", document_id)
+        set_purge_status(settings, user_id, document_id, status="failed")
