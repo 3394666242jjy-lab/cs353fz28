@@ -1033,3 +1033,128 @@ blockquote {
     }
   }
 }
+
+/* ---------- 准备计划（M2） ---------- */
+
+.plan-panel {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  box-shadow: var(--shadow-sm);
+}
+
+.plan-entry {
+  margin-top: 20px;
+}
+
+.plan-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 14px;
+  align-items: end;
+  margin: 16px 0;
+}
+
+.plan-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-field input {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 11px 14px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.plan-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.plan-draft {
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(160deg, #ffffff 0%, #f8fafc 100%);
+  padding: 20px;
+}
+
+.plan-draft-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plan-task-list {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-task {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.plan-task-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.plan-task-date {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-radius: var(--radius-pill);
+  padding: 3px 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-task-title {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.plan-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.plan-empty {
+  margin-top: 10px;
+}
+
+@media (max-width: 850px) {
+  .plan-form {
+    grid-template-columns: 1fr;
+  }
+
+  .plan-task {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

@@ -1,14 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ApiError, api, hasAuthToken, setAuthToken, type UserResult } from './api/client';
 import { describeError } from './api/errors';
-import { sampleInputs } from './api/fixtures';
+import { sampleInputs, type AnalysisResult } from './api/fixtures';
 import StatusBadge from './components/StatusBadge';
 import AnalysisPanel from './pages/AnalysisPanel';
 import DocumentManager from './pages/DocumentManager';
 import DocumentUpload from './pages/DocumentUpload';
 import JdImport from './pages/JdImport';
+import PlanPanel from './pages/PlanPanel';
 
-const steps = ['资料准备', '目标岗位', '匹配分析'];
+const steps = ['资料准备', '目标岗位', '匹配分析', '准备计划'];
 type Connection = 'checking' | 'connected' | 'disconnected';
 
 function readSelectedReadyDocuments(): string[] {
@@ -53,6 +54,7 @@ export default function App() {
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [hasRealAnalysis, setHasRealAnalysis] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   const [documentIds, setDocumentIds] = useState<string[]>([]);
   const [title, setTitle] = useState(() => readPendingJob()?.title ?? '后端开发实习生');
   const [jd, setJd] = useState(() => readPendingJob()?.jd ?? '');
@@ -69,6 +71,7 @@ export default function App() {
     sessionStorage.removeItem('careerpilot.owner');
     setDocumentIds([]);
     setHasRealAnalysis(false);
+    setAnalysis(null);
     setAnalysisVisible(false);
     setJd('');
   }
@@ -467,9 +470,25 @@ export default function App() {
               </button>
             </section>
           ) : null)}
+        {step === 2 && analysis && (
+          <section className="panel plan-entry">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">下一步</p>
+                <h3>分析完成，生成准备计划</h3>
+              </div>
+              <button type="button" className="primary-button" onClick={() => setStep(3)}>
+                生成准备计划 →
+              </button>
+            </div>
+            <p className="small muted">
+              根据分析结果、目标日期和每天可用时间生成计划草稿；确认前不会创建正式任务。
+            </p>
+          </section>
+        )}
         <div
           className="panel"
-          hidden={step === 0 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
+          hidden={step === 0 || step === 3 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
         >
           {(!hasAuthToken() || user) && (
             <JdImport
@@ -478,12 +497,14 @@ export default function App() {
               title={title}
               documentIds={documentIds}
               onAnalysis={(result) => {
+                setAnalysis(result);
                 setHasRealAnalysis(result !== null);
                 if (result) setAnalysisVisible(false);
               }}
             />
           )}
         </div>
+        {step === 3 && <PlanPanel analysisId={analysis?.id} analysisTitle={title} />}
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>
           <span>开发预览</span>
