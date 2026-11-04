@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import TypeAdapter
 from pymongo.errors import PyMongoError
 
@@ -47,6 +47,7 @@ from app.services.executions import (
     transition_execution,
 )
 from app.services.executions import get_execution as executions_get
+from app.services.events import list_events
 from app.services.jobs import load_job, save_job
 from app.services.storage import remove_upload, save_upload
 from app.services.tasks import dispatch_analysis_task, dispatch_index_task, dispatch_purge_task
@@ -545,6 +546,72 @@ def get_execution(
             detail={"code": "NOT_FOUND", "message": "任务不存在或不属于当前用户。"},
         )
     return Envelope(data=execution, request_id=request.state.request_id)
+
+
+@router.get(
+    "/executions/{execution_id}/events",
+    tags=["execution"],
+    responses=AUTH_ERRORS | {404: {"model": ErrorEnvelope, "description": "Execution not found"}},
+)
+def stream_execution_events(
+    execution_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    """SSE stream of execution state changes, with Last-Event-ID replay.
+
+    The client reconnects with the last seen event id; this endpoint replays
+    missed events then live-updates until the execution reaches a terminal state.
+    """
+    try:
+        execution = executions_get(settings, user.id, execution_id)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "任务不存在或不属于当前用户。"},
+        )
+
+    last_id = request.headers.get("Last-Event-ID")
+    import json
+    import asyncio
+
+    async def event_generator():
+        seen_ids: set[str] = set()
+        # Replay missed events first
+        replay = list_events(settings, user.id, execution_id, after_id=last_id, limit=100)
+        for row in replay:
+            seen_ids.add(row["id"])
+            yield f"id: {row['id']}\nevent: {row['type']}\ndata: {json.dumps(row['payload'], ensure_ascii=False)}\n\n"
+        # Live poll until terminal
+        terminal = {"succeeded", "failed"}
+        while True:
+            if await request.is_disconnected():
+                return
+            current = executions_get(settings, user.id, execution_id)
+            if current is None:
+                yield f"event: error\ndata: {json.dumps({'code': 'NOT_FOUND'}, ensure_ascii=False)}\n\n"
+                return
+            new_rows = list_events(settings, user.id, execution_id, after_id=None, limit=100)
+            for row in new_rows:
+                if row["id"] not in seen_ids:
+                    seen_ids.add(row["id"])
+                    yield f"id: {row['id']}\nevent: {row['type']}\ndata: {json.dumps(row['payload'], ensure_ascii=False)}\n\n"
+            if current.status in terminal:
+                yield f"event: end\ndata: {json.dumps({'status': current.status}, ensure_ascii=False)}\n\n"
+                return
+            await asyncio.sleep(1.5)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(

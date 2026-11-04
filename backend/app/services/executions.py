@@ -12,6 +12,7 @@ from app.config import Settings
 from app.schemas.common import ContractModel
 from app.schemas.resources import ExecutionError, ExecutionResult, PendingInput
 from app.services.database import database_connection
+from app.services.events import append_event
 
 
 class ExecutionCreate(ContractModel):
@@ -135,6 +136,20 @@ def transition_execution(
                 },
             },
             {"$set": update, "$inc": {"state_version": 1}},
+        )
+    if result.matched_count == 1:
+        append_event(
+            settings,
+            user_id,
+            execution_id,
+            event_type="status_change",
+            payload={
+                "status": status,
+                "state_version": expected_state_version + 1,
+                "result_type": result_type,
+                "result_id": result_id,
+                "error": error.model_dump() if error else None,
+            },
         )
     return result.matched_count == 1
 
