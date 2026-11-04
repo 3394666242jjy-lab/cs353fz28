@@ -118,6 +118,62 @@ export interface paths {
         get: operations["get_document_api_v1_documents__document_id__get"];
         put?: never;
         post?: never;
+        /**
+         * Delete Document
+         * @description Soft-delete a document: it becomes immediately unreadable and unsearchable.
+         *
+         *     The write blocks every read and retrieval path first; chunks, vectors and
+         *     files are then purged asynchronously with retry (dev/03 lifecycle #3).
+         *     Deleting an already-deleted document is a 404, per the shared API rules.
+         */
+        delete: operations["delete_document_api_v1_documents__document_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Update Document Text
+         * @description Edit the extracted text and build the next immutable version.
+         *
+         *     The published version keeps serving until the new one is fully indexed
+         *     (dev/03 lifecycle #1); analyses pinned to the old version show stale once
+         *     current_version advances. expected_version is optimistic concurrency
+         *     control: a stale editor gets 409 VERSION_CONFLICT.
+         */
+        put: operations["update_document_text_api_v1_documents__document_id__text_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/{document_id}/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reindex Document
+         * @description Retry indexing of the current version after a failure.
+         *
+         *     An already-running build is reused (same execution returned); a published
+         *     version is immutable and never rebuilt in place.
+         */
+        post: operations["reindex_document_api_v1_documents__document_id__reindex_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -207,6 +263,150 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/executions/{execution_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Execution Events
+         * @description Authenticated SSE stream with sequence-based replay (dev/04 M2).
+         *
+         *     Replay starts after the Last-Event-ID header or the after_event_id query
+         *     parameter (both set and different is a 400). A cursor that no longer
+         *     exists in the retained history is a 410: the client then reads the
+         *     execution snapshot (latest_event_id) before reconnecting. Live events are
+         *     polled from the durable execution_events collection by sequence, so the
+         *     replay-to-subscribe window cannot lose events; heartbeats are SSE
+         *     comments and the stream closes after a terminal event.
+         */
+        get: operations["stream_execution_events_api_v1_executions__execution_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/executions/{execution_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Execution
+         * @description Resume a clarification pause with the user's answer (dev/04 M2).
+         *
+         *     New documents must already be uploaded and indexed; their current versions
+         *     are pinned into the recorded input. A replayed identical request returns
+         *     the same acceptance; the same interrupt with a different answer is a 409
+         *     INPUT_CONFLICT, and a stale interrupt/checkpoint pair is a 409
+         *     STALE_CHECKPOINT. Plan confirmations use POST /plans/{id}/confirm instead.
+         */
+        post: operations["resume_execution_api_v1_executions__execution_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Plan
+         * @description Create a draft plan execution from a ready, fresh analysis.
+         *
+         *     The plan row, its execution and the start dispatch commit in one
+         *     transaction (dev/03 lifecycle #4/#5); the worker (member D's planner)
+         *     fills the draft and parks the execution at waiting_for_input, where
+         *     GET /executions/{id} exposes the draft plan via pending_input/result_id.
+         */
+        post: operations["create_plan_api_v1_plans_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plans/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Plan
+         * @description Return the draft or confirmed plan with its tasks, owner-scoped.
+         */
+        get: operations["read_plan_api_v1_plans__plan_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plans/{plan_id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm Plan Route
+         * @description Confirm the draft: persist formal tasks and enqueue the graph resume.
+         *
+         *     Permission, source freshness and the schedule are re-validated at confirm
+         *     time; tasks, the confirmation input and the resume dispatch commit in one
+         *     transaction (dev/03 lifecycle #4). Replays return the same confirmed plan
+         *     without duplicating tasks or resume messages.
+         */
+        post: operations["confirm_plan_route_api_v1_plans__plan_id__confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/plans/{plan_id}/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Task Status
+         * @description Update one confirmed task's status (todo/in_progress/done).
+         */
+        patch: operations["update_task_status_api_v1_plans__plan_id__tasks__task_id__patch"];
         trace?: never;
     };
     "/api/v1/evidence/{chunk_id}": {
@@ -317,6 +517,40 @@ export interface components {
              */
             status: "processing";
         };
+        /**
+         * DocumentDeleted
+         * @description DELETE /documents/{id} 的 202 响应：删除已生效，清理异步进行。
+         */
+        DocumentDeleted: {
+            /** Document Id */
+            document_id: string;
+            /**
+             * Status
+             * @default deleted
+             * @constant
+             */
+            status: "deleted";
+            /**
+             * Purge Status
+             * @enum {string}
+             */
+            purge_status: "pending" | "done" | "failed";
+        };
+        /**
+         * DocumentExtraction
+         * @description 当前版本的可预览提取内容；PDF 保留原始页码（dev/03）。
+         */
+        DocumentExtraction: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "text" | "pdf";
+            /** Text */
+            text?: string | null;
+            /** Pages */
+            pages?: components["schemas"]["ExtractedPage"][] | null;
+        };
         /** DocumentPage */
         DocumentPage: {
             /** Items */
@@ -344,6 +578,17 @@ export interface components {
             status: "uploaded" | "processing" | "ready" | "failed" | "deleted";
             /** Error */
             error?: string | null;
+            extraction?: components["schemas"]["DocumentExtraction"] | null;
+        };
+        /**
+         * DocumentTextUpdate
+         * @description PUT /documents/{id}/text：编辑提取文本并生成新版本。
+         */
+        DocumentTextUpdate: {
+            /** Extracted Text */
+            extracted_text: string;
+            /** Expected Version */
+            expected_version: number;
         };
         /** DocumentVersion */
         DocumentVersion: {
@@ -351,6 +596,15 @@ export interface components {
             document_id: string;
             /** Version */
             version: number;
+        };
+        /** DocumentVersionAccepted */
+        DocumentVersionAccepted: {
+            /** Document Id */
+            document_id: string;
+            /** Version */
+            version: number;
+            /** Execution Id */
+            execution_id: string;
         };
         /** Envelope[AnalysisResult] */
         Envelope_AnalysisResult_: {
@@ -370,6 +624,12 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** Envelope[DocumentDeleted] */
+        Envelope_DocumentDeleted_: {
+            data: components["schemas"]["DocumentDeleted"];
+            /** Request Id */
+            request_id: string;
+        };
         /** Envelope[DocumentPage] */
         Envelope_DocumentPage_: {
             data: components["schemas"]["DocumentPage"];
@@ -379,6 +639,12 @@ export interface components {
         /** Envelope[DocumentResult] */
         Envelope_DocumentResult_: {
             data: components["schemas"]["DocumentResult"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[DocumentVersionAccepted] */
+        Envelope_DocumentVersionAccepted_: {
+            data: components["schemas"]["DocumentVersionAccepted"];
             /** Request Id */
             request_id: string;
         };
@@ -415,6 +681,24 @@ export interface components {
         /** Envelope[Liveness] */
         Envelope_Liveness_: {
             data: components["schemas"]["Liveness"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[PlanConfirmed] */
+        Envelope_PlanConfirmed_: {
+            data: components["schemas"]["PlanConfirmed"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[PlanResult] */
+        Envelope_PlanResult_: {
+            data: components["schemas"]["PlanResult"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[PlanTask] */
+        Envelope_PlanTask_: {
+            data: components["schemas"]["PlanTask"];
             /** Request Id */
             request_id: string;
         };
@@ -487,6 +771,18 @@ export interface components {
             /** Chunk Id */
             chunk_id: string;
         };
+        /**
+         * EvidenceRefLike
+         * @description 草稿任务引用的资料来源（chunk 定位，可选）。
+         */
+        EvidenceRefLike: {
+            /** Document Id */
+            document_id?: string | null;
+            /** Version */
+            version?: number | null;
+            /** Chunk Id */
+            chunk_id?: string | null;
+        };
         /** ExecutionAccepted */
         ExecutionAccepted: {
             /** Execution Id */
@@ -523,6 +819,18 @@ export interface components {
             error?: components["schemas"]["ExecutionError"] | null;
             /** Latest Event Id */
             latest_event_id?: string | null;
+        };
+        /** ExpectedVersion */
+        ExpectedVersion: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** ExtractedPage */
+        ExtractedPage: {
+            /** Page */
+            page: number;
+            /** Text */
+            text: string;
         };
         /** JobCreate */
         JobCreate: {
@@ -628,6 +936,123 @@ export interface components {
             /** Plan Id */
             plan_id?: string | null;
         };
+        /**
+         * PlanConfirmed
+         * @description POST /plans/{id}/confirm 的 200 响应；重放返回同一结果。
+         */
+        PlanConfirmed: {
+            plan: components["schemas"]["PlanResult"];
+            /** Execution Id */
+            execution_id: string;
+            /** Resumed */
+            resumed: boolean;
+        };
+        /**
+         * PlanCreate
+         * @description POST /plans：从一份就绪且未过期的分析生成准备计划草稿。
+         */
+        PlanCreate: {
+            /** Analysis Id */
+            analysis_id: string;
+            /**
+             * Deadline
+             * Format: date
+             */
+            deadline: string;
+            /** Timezone */
+            timezone: string;
+            /** Daily Minutes */
+            daily_minutes: number;
+        };
+        /**
+         * PlanDraftTask
+         * @description 计划草稿任务（D 生成，确认前不成为正式任务）。
+         */
+        PlanDraftTask: {
+            /** Title */
+            title: string;
+            /** Requirement Ids */
+            requirement_ids?: string[];
+            /**
+             * Scheduled Date
+             * Format: date
+             */
+            scheduled_date: string;
+            /** Estimated Minutes */
+            estimated_minutes: number;
+            /** Source Refs */
+            source_refs?: components["schemas"]["EvidenceRefLike"][];
+        };
+        /** PlanResult */
+        PlanResult: {
+            /** Id */
+            id: string;
+            /** Analysis Id */
+            analysis_id: string;
+            /** Execution Id */
+            execution_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "draft" | "confirmed";
+            /**
+             * Deadline
+             * Format: date
+             */
+            deadline: string;
+            /** Timezone */
+            timezone: string;
+            /** Daily Minutes */
+            daily_minutes: number;
+            /** Draft Tasks */
+            draft_tasks?: components["schemas"]["PlanDraftTask"][];
+            /** Tasks */
+            tasks?: components["schemas"]["PlanTask"][] | null;
+            /** Confirmed At */
+            confirmed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * PlanTask
+         * @description 确认后的正式任务（稳定 ID，幂等写入）。
+         */
+        PlanTask: {
+            /** Id */
+            id: string;
+            /** Plan Id */
+            plan_id: string;
+            /** Title */
+            title: string;
+            /** Requirement Ids */
+            requirement_ids: string[];
+            /**
+             * Scheduled Date
+             * Format: date
+             */
+            scheduled_date: string;
+            /** Estimated Minutes */
+            estimated_minutes: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "todo" | "in_progress" | "done";
+            /** Source Refs */
+            source_refs?: components["schemas"]["EvidenceRefLike"][];
+        };
+        /** PlanTaskStatusUpdate */
+        PlanTaskStatusUpdate: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "todo" | "in_progress" | "done";
+        };
         /** Readiness */
         Readiness: {
             /**
@@ -639,6 +1064,35 @@ export interface components {
             dependencies: {
                 [key: string]: "ok" | "unavailable";
             };
+        };
+        /**
+         * ResumeAnswer
+         * @description POST /executions/{id}/resume 的用户回答（dev/04 M2）。
+         *
+         *     自由文本属于待核实补充，不自动升级为有文档证据的经历；为空时必须
+         *     显式选择 continue_without_evidence 或提供新上传并就绪的资料。
+         */
+        ResumeAnswer: {
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /**
+             * Continue Without Evidence
+             * @default false
+             */
+            continue_without_evidence: boolean;
+            /** Document Ids */
+            document_ids?: string[];
+        };
+        /** ResumeRequest */
+        ResumeRequest: {
+            /** Interrupt Id */
+            interrupt_id: string;
+            /** Checkpoint Id */
+            checkpoint_id: string;
+            answer: components["schemas"]["ResumeAnswer"];
         };
         /** TextLocator */
         TextLocator: {
@@ -1234,6 +1688,260 @@ export interface operations {
             };
         };
     };
+    delete_document_api_v1_documents__document_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_DocumentDeleted_"];
+                };
+            };
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid request parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_document_text_api_v1_documents__document_id__text_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentTextUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_DocumentVersionAccepted_"];
+                };
+            };
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version conflict or document not ready */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid request parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable or task dispatch failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    reindex_document_api_v1_documents__document_id__reindex_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExpectedVersion"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_DocumentVersionAccepted_"];
+                };
+            };
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Version conflict or document not ready */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid request parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable or task dispatch failed */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     create_job_api_v1_jobs_post: {
         parameters: {
             query?: never;
@@ -1599,6 +2307,538 @@ export interface operations {
                 };
             };
             /** @description Invalid request parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    stream_execution_events_api_v1_executions__execution_id__events_get: {
+        parameters: {
+            query?: {
+                after_event_id?: string | null;
+            };
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Conflicting replay cursors */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Execution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Event history expired */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid request parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    resume_execution_api_v1_executions__execution_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                execution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ExecutionAccepted_"];
+                };
+            };
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Execution or document not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description State, checkpoint or input conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid resume answer */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_plan_api_v1_plans_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ExecutionAccepted_"];
+                };
+            };
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis or plan not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis not ready, stale or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid constraints or infeasible plan */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    read_plan_api_v1_plans__plan_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_PlanResult_"];
+                };
+            };
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis or plan not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis not ready, stale or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid constraints or infeasible plan */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    confirm_plan_route_api_v1_plans__plan_id__confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_PlanConfirmed_"];
+                };
+            };
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis or plan not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis not ready, stale or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid constraints or infeasible plan */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    update_task_status_api_v1_plans__plan_id__tasks__task_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: string;
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlanTaskStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_PlanTask_"];
+                };
+            };
+            /** @description Invalid or missing bearer token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis or plan not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Analysis not ready, stale or state conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid constraints or infeasible plan */
             422: {
                 headers: {
                     [name: string]: unknown;
