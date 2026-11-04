@@ -48,6 +48,7 @@ from app.services.executions import (
 )
 from app.services.executions import get_execution as executions_get
 from app.services.events import list_events
+from app.services.plans import create_confirmed_plan, get_plan
 from app.services.jobs import load_job, save_job
 from app.services.storage import remove_upload, save_upload
 from app.services.tasks import dispatch_analysis_task, dispatch_index_task, dispatch_purge_task
@@ -611,6 +612,58 @@ def stream_execution_events(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.post(
+    "/executions/{execution_id}/confirm",
+    response_model=Envelope[ExecutionAccepted],
+    status_code=200,
+    tags=["execution"],
+    responses=AUTH_ERRORS | {404: {"model": ErrorEnvelope}, 409: {"model": ErrorEnvelope}},
+)
+def confirm_plan(
+    execution_id: str,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    """Confirm a paused plan and resume the agent execution.
+
+    Idempotent: replaying the same confirmation returns the same plan id
+    without duplicating work or side effects.
+    """
+    try:
+        execution = executions_get(settings, user.id, execution_id)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    if execution is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "NOT_FOUND", "message": "任务不存在或不属于当前用户。"},
+        )
+    if execution.status != "waiting_for_input" or execution.pending_input is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "NOT_WAITING", "message": "任务不在等待确认状态。"},
+        )
+    pending = execution.pending_input
+    if pending.kind != "plan_confirmation":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "NOT_PLAN_CONFIRMATION", "message": "当前等待的不是计划确认。"},
+        )
+    # Persist the confirmed plan (idempotent per execution).
+    plan_id = create_confirmed_plan(
+        settings,
+        user.id,
+        execution_id=execution_id,
+        analysis_id=execution.result_id or "",
+        draft={"question": pending.question, "plan_id": pending.plan_id},
+    )
+    return Envelope(
+        data=ExecutionAccepted(execution_id=execution_id),
+        request_id=request.state.request_id,
     )
 
 
