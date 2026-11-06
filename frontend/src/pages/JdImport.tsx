@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { describeError, isAbortError, type UiError } from '../api/errors';
 import { sampleAnalysis, sampleEvidence } from '../api/fixtures';
 import StatusBadge from '../components/StatusBadge';
+import type { JobVersionInfo } from '../components/JdVersionBar';
 import type { components } from '../api/schema';
 
 type AnalysisResult = components['schemas']['AnalysisResult'];
@@ -38,6 +39,12 @@ interface JdImportProps {
   title?: string;
   /** 已就绪的资料 ID；真实分析必需。 */
   documentIds?: string[];
+  /** App 已保存的岗位版本；存在时复用，不再重复创建岗位。 */
+  job?: JobVersionInfo | null;
+  /** JD 或岗位名称有未保存修改时为 true，必须先保存再分析。 */
+  jobDirty?: boolean;
+  /** 分析开始时首次创建岗位，回传给 App 记录版本。 */
+  onJobCreated?: (job: JobVersionInfo) => void;
   /** 分析成功后回调，便于父组件切换页面。 */
   onAnalysis?: (analysis: AnalysisResult | null) => void;
 }
@@ -63,7 +70,15 @@ function readPendingExecution(): { executionId: string; startedAt: number } | nu
   return null;
 }
 
-export default function JdImport({ jd, title = '', documentIds = [], onAnalysis }: JdImportProps) {
+export default function JdImport({
+  jd,
+  title = '',
+  documentIds = [],
+  job = null,
+  jobDirty = false,
+  onJobCreated,
+  onAnalysis,
+}: JdImportProps) {
   const [mode, setMode] = useState<Mode>('real');
   const [phase, setPhase] = useState<Phase>('idle');
   const [execution, setExecution] = useState<ExecutionResult | null>(null);
@@ -79,6 +94,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const onAnalysisRef = useRef(onAnalysis);
+  const onJobCreatedRef = useRef(onJobCreated);
   const evidenceRequestRef = useRef(0);
   const inputRef = useRef({ jd, title, documentIds: JSON.stringify(documentIds) });
 
@@ -87,6 +103,10 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
   useEffect(() => {
     onAnalysisRef.current = onAnalysis;
   }, [onAnalysis]);
+
+  useEffect(() => {
+    onJobCreatedRef.current = onJobCreated;
+  }, [onJobCreated]);
 
   useEffect(() => {
     const ids = JSON.stringify(documentIds);
@@ -225,6 +245,13 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
       setError({ code: 'EMPTY_TITLE', message: '请先填写岗位名称。' });
       return;
     }
+    if (jobDirty) {
+      setError({
+        code: 'UNSAVED_JOB',
+        message: 'JD 或岗位名称有未保存修改，请先在「目标岗位」点击「保存岗位」再分析。',
+      });
+      return;
+    }
     const ids = documentIds.filter((id) => id.trim().length > 0);
     if (ids.length === 0) {
       setError({
@@ -241,10 +268,20 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const job = await api.createJob({ title: title.trim(), raw_jd: jd }, controller.signal);
-      if (!mountedRef.current || controller.signal.aborted) return;
+      let jobId = job && !job.sample ? job.id : null;
+      if (!jobId) {
+        const created = await api.createJob({ title: title.trim(), raw_jd: jd }, controller.signal);
+        if (!mountedRef.current || controller.signal.aborted) return;
+        jobId = created.data.job_id;
+        onJobCreatedRef.current?.({
+          id: jobId,
+          version: created.data.version,
+          title: title.trim(),
+          raw_jd: jd,
+        });
+      }
       const accepted = await api.createAnalysis(
-        { job_id: job.data.job_id, document_ids: ids },
+        { job_id: jobId, document_ids: ids },
         controller.signal,
       );
       if (!mountedRef.current || controller.signal.aborted) return;
