@@ -312,6 +312,10 @@ export default function App() {
   }
 
   function saveSampleJob() {
+    if (!jd.trim()) {
+      setJobNotice({ tone: 'danger', text: '请先填写岗位 JD 再保存。' });
+      return;
+    }
     const next: JobVersionInfo = {
       id: 'job_demo_local',
       version: (job?.sample ? job.version : 0) + 1,
@@ -386,9 +390,9 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-note">
-          <p className="eyebrow">M1 / 开发骨架</p>
+          <p className="eyebrow">M2 / 资料与计划</p>
           <p>先整理资料，再用证据理解岗位要求。</p>
-          <span>计划与面试功能将在后续阶段接入。</span>
+          <span>资料版本、岗位编辑与准备计划已在 M2 接入。</span>
         </div>
         <div className="connection-block">
           <StatusBadge
@@ -434,7 +438,7 @@ export default function App() {
         <div className="page-intro">
           <p className="eyebrow">CAREERPILOT / WORKSPACE</p>
           <h1>你的求职准备，从经历开始。</h1>
-          <p>整理个人资料，选择目标岗位，再查看每条要求对应的证据。</p>
+          <p>整理个人资料，选择目标岗位，核对证据，再生成准备计划。</p>
         </div>
         <div className="demo-notice">
           <span className="notice-label">开发预览</span>
