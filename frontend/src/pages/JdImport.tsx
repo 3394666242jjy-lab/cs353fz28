@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { describeError, isAbortError, type UiError } from '../api/errors';
+import { subscribeExecutionEvents } from '../api/events';
 import { sampleAnalysis, sampleEvidence } from '../api/fixtures';
 import StatusBadge from '../components/StatusBadge';
 import type { JobVersionInfo } from '../components/JdVersionBar';
+import type { ExecutionEvent } from '../api/m2-types';
 import type { components } from '../api/schema';
 
 type AnalysisResult = components['schemas']['AnalysisResult'];
@@ -17,6 +19,25 @@ type Mode = 'real' | 'sample';
 const POLL_INTERVAL_MS = 1500;
 const POLL_TIMEOUT_MS = 180_000;
 const STORAGE_KEY = 'careerpilot.pending_analysis';
+const CURSOR_KEY = 'careerpilot.event_cursor';
+
+function readCursor(executionId: string): string | undefined {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(CURSOR_KEY) ?? 'null') as {
+      executionId?: string;
+      eventId?: string;
+    } | null;
+    return saved?.executionId === executionId && typeof saved.eventId === 'string'
+      ? saved.eventId
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveCursor(executionId: string, eventId: string) {
+  sessionStorage.setItem(CURSOR_KEY, JSON.stringify({ executionId, eventId }));
+}
 
 const resultLabels = {
   supported: { label: '有证据支持', tone: 'success' },
@@ -89,9 +110,13 @@ export default function JdImport({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<Evidence | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState<string | null>(null);
+  const [streamNotice, setStreamNotice] = useState<string | null>(null);
 
   const timerRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const streamRef = useRef<{ close: () => void } | null>(null);
+  const finishedRef = useRef(false);
+  const fallingBackRef = useRef(false);
   const mountedRef = useRef(true);
   const onAnalysisRef = useRef(onAnalysis);
   const onJobCreatedRef = useRef(onJobCreated);
@@ -126,15 +151,17 @@ export default function JdImport({
       setStartedAt(saved.startedAt);
       const controller = new AbortController();
       abortRef.current = controller;
-      poll(saved.executionId, controller);
+      follow(saved.executionId, controller);
     }
     return () => {
       mountedRef.current = false;
+      finishedRef.current = true;
       evidenceRequestRef.current += 1;
       stopTimers();
+      closeStream();
       abortRef.current?.abort();
     };
-    // 仅用于刷新后恢复轮询，挂载时执行一次。
+    // 仅用于刷新后恢复进度，挂载时执行一次。
   }, []);
 
   useEffect(() => {
@@ -155,37 +182,56 @@ export default function JdImport({
     }
   }
 
+  function closeStream() {
+    streamRef.current?.close();
+    streamRef.current = null;
+  }
+
   function fail(next: UiError) {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || finishedRef.current) return;
+    finishedRef.current = true;
     stopTimers();
+    closeStream();
     abortRef.current?.abort();
     sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(CURSOR_KEY);
+    setStreamNotice(null);
     setPhase('failed');
     setError(next);
   }
 
+  function fallbackToPoll(executionId: string, controller: AbortController, reason: string) {
+    if (finishedRef.current || fallingBackRef.current) return;
+    fallingBackRef.current = true;
+    closeStream();
+    setStreamNotice(`${reason}已自动切换为轮询任务状态。`);
+    poll(executionId, controller);
+  }
+
   function poll(executionId: string, controller: AbortController) {
+    stopTimers();
     const tick = async () => {
-      if (!mountedRef.current || controller.signal.aborted) return;
+      if (!mountedRef.current || finishedRef.current || controller.signal.aborted) return;
       try {
         const res = await api.getExecution(executionId, controller.signal);
-        if (!mountedRef.current || controller.signal.aborted) return;
+        if (!mountedRef.current || finishedRef.current || controller.signal.aborted) return;
         const exec = res.data;
         setError(null);
         setExecution(exec);
         if (exec.status === 'succeeded') {
           stopTimers();
-          void finish(exec, controller);
+          void finish(exec.result_id ?? null, controller);
         } else if (exec.status === 'failed') {
           fail(exec.error ?? { code: 'EXECUTION_FAILED', message: '分析任务失败。' });
         } else if (exec.status === 'waiting_for_input') {
           fail({
             code: 'WAITING_INPUT',
-            message: '分析请求补充信息。M1 不进入等待输入，若出现请按 M2 的恢复流程处理。',
+            message: '分析请求补充信息；M2 的恢复流程尚未接入分析页，请稍后重试。',
           });
         }
       } catch (err) {
-        if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
+        if (!mountedRef.current || finishedRef.current || controller.signal.aborted) return;
+        if (isAbortError(err)) return;
         setError({
           code: 'POLL_RETRY',
           message: `暂时无法查询任务状态，将继续重试：${describeError(err).message}`,
@@ -198,15 +244,21 @@ export default function JdImport({
     }, POLL_INTERVAL_MS);
   }
 
-  async function finish(exec: ExecutionResult, controller: AbortController) {
-    if (!exec.result_id) {
+  async function finish(resultId: string | null, controller: AbortController) {
+    if (finishedRef.current) return;
+    if (!resultId) {
       fail({ code: 'MISSING_RESULT', message: '任务已成功但缺少结果 ID，无法读取分析结果。' });
       return;
     }
+    finishedRef.current = true;
+    stopTimers();
+    closeStream();
     try {
-      const res = await api.getAnalysis(exec.result_id, controller.signal);
+      const res = await api.getAnalysis(resultId, controller.signal);
       if (!mountedRef.current || controller.signal.aborted) return;
       sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(CURSOR_KEY);
+      setStreamNotice(null);
       setAnalysis(res.data);
       setPhase('succeeded');
       setSelectedKey(null);
@@ -214,25 +266,80 @@ export default function JdImport({
       onAnalysisRef.current?.(res.data);
     } catch (err) {
       if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
+      finishedRef.current = false;
       fail(describeError(err));
     }
   }
 
+  function follow(executionId: string, controller: AbortController) {
+    closeStream();
+    fallingBackRef.current = false;
+    streamRef.current = subscribeExecutionEvents(executionId, {
+      afterEventId: readCursor(executionId),
+      signal: controller.signal,
+      onEvent: (event: ExecutionEvent) => {
+        if (!mountedRef.current || finishedRef.current || controller.signal.aborted) return;
+        saveCursor(executionId, event.id);
+        const data = event.data;
+        setExecution((previous) => ({
+          id: executionId,
+          type: previous?.type ?? 'analysis',
+          status: data.status,
+          state_version: previous?.state_version ?? 0,
+          result_type: data.result_type ?? previous?.result_type ?? null,
+          result_id: data.result_id ?? previous?.result_id ?? null,
+          pending_input: previous?.pending_input ?? null,
+          error: data.error ? { code: data.error.code, message: data.error.message } : null,
+          latest_event_id: event.id,
+        }));
+        if (event.type === 'completed' || data.status === 'succeeded') {
+          void finish(data.result_id ?? null, controller);
+        } else if (event.type === 'failed' || data.status === 'failed') {
+          fail(data.error ?? { code: 'EXECUTION_FAILED', message: '分析任务失败。' });
+        } else if (event.type === 'waiting_for_input' || data.status === 'waiting_for_input') {
+          fail({
+            code: 'WAITING_INPUT',
+            message: '分析请求补充信息；M2 的恢复流程尚未接入分析页，请稍后重试。',
+          });
+        }
+      },
+      onError: (streamError) => {
+        if (!mountedRef.current || finishedRef.current || controller.signal.aborted) return;
+        if (streamError.code === 'UNAUTHENTICATED') {
+          fail({ code: streamError.code, message: streamError.message });
+          return;
+        }
+        fallbackToPoll(executionId, controller, `实时事件流不可用（${streamError.message}），`);
+      },
+      onEnd: (reason) => {
+        if (!mountedRef.current || finishedRef.current || controller.signal.aborted) return;
+        if (reason === 'terminal') return;
+        fallbackToPoll(executionId, controller, '实时事件流已结束，');
+      },
+    });
+  }
+
   function reset() {
+    finishedRef.current = true;
     stopTimers();
+    closeStream();
     abortRef.current?.abort();
     abortRef.current = null;
+    fallingBackRef.current = false;
     evidenceRequestRef.current += 1;
     sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(CURSOR_KEY);
     setPhase('idle');
     setExecution(null);
     setAnalysis(null);
     setError(null);
+    setStreamNotice(null);
     setElapsed(0);
     setStartedAt(null);
     setSelectedKey(null);
     setSelectedEvidence(null);
     setEvidenceLoading(null);
+    finishedRef.current = false;
     onAnalysisRef.current?.(null);
   }
 
@@ -296,7 +403,7 @@ export default function JdImport({
         }),
       );
       setPhase('polling');
-      poll(accepted.data.execution_id, controller);
+      follow(accepted.data.execution_id, controller);
     } catch (err) {
       if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
       fail(describeError(err));
@@ -381,7 +488,7 @@ export default function JdImport({
     <section className="jd-analysis" aria-labelledby="jd-analysis-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">真实分析 / 轮询</p>
+          <p className="eyebrow">真实分析 / 实时进度</p>
           <h3 id="jd-analysis-title">提交岗位，等待分析结果</h3>
         </div>
         <div className="mode-switch" role="group" aria-label="分析模式">
@@ -413,7 +520,8 @@ export default function JdImport({
       </div>
 
       <p className="small muted">
-        真实分析使用本次选中的 {documentIds.length} 份已就绪资料（最多 20 份）；样例演练不访问后端。
+        真实分析使用本次选中的 {documentIds.length} 份已就绪资料（最多 20 份）；进度优先用 SSE
+        实时事件推送，不可用时自动退回轮询。样例演练不访问后端。
       </p>
 
       <div className="form-actions">
@@ -452,6 +560,11 @@ export default function JdImport({
         {running && elapsed * 1000 > POLL_TIMEOUT_MS && (
           <p className="muted small">
             等待时间较长，任务可能仍在排队或执行；可以检查 Worker 和依赖服务。
+          </p>
+        )}
+        {streamNotice && (
+          <p className="muted small" role="status">
+            {streamNotice}
           </p>
         )}
         {running && (

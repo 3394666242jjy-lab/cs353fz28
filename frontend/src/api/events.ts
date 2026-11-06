@@ -2,7 +2,12 @@ import { apiBase, getAuthToken } from './client';
 import type { ExecutionEvent, ExecutionEventData } from './m2-types';
 
 export type ExecutionStreamErrorCode =
-  'UNAUTHENTICATED' | 'RESOURCE_NOT_FOUND' | 'EVENT_HISTORY_EXPIRED' | 'NETWORK' | 'INVALID_STREAM';
+  | 'UNAUTHENTICATED'
+  | 'RESOURCE_NOT_FOUND'
+  | 'EVENT_HISTORY_EXPIRED'
+  | 'STREAM_UNAVAILABLE'
+  | 'NETWORK'
+  | 'INVALID_STREAM';
 
 export class ExecutionStreamError extends Error {
   constructor(
@@ -111,6 +116,15 @@ export function subscribeExecutionEvents(
         new ExecutionStreamError(
           '事件历史已过期，请先读取任务快照，再用 latest_event_id 重连。',
           'EVENT_HISTORY_EXPIRED',
+        ),
+      );
+      return;
+    }
+    if (response.status === 405 || response.status === 501) {
+      fail(
+        new ExecutionStreamError(
+          '服务端尚未提供执行事件流接口，请改用任务状态轮询。',
+          'STREAM_UNAVAILABLE',
         ),
       );
       return;
