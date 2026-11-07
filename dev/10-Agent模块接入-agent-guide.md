@@ -1,6 +1,6 @@
 # D：M1 Agent 模块与交接
 
-状态：D 模块实现与离线自查；真实生成模型、B/C 全链路与多页 PDF 验收待完成。关联任务 #9，按 08 文档 v0.4 的 M1 范围交付。本文不声明整个项目已经可用。
+状态：D 模块实现与离线自查；真实生成模型、B/C 全链路与多页 PDF 验收待完成。关联任务 #9，按 08 文档 v0.4 的 M1 范围交付。M2 的 B↔D 接入契约见文末专节（B 补充，对应 #26）。本文不声明整个项目已经可用。
 
 ## 已实现的流程
 
@@ -124,3 +124,63 @@ PDF locator 是原 PDF 页码，文本 locator 是原文行范围。D 只保留�
 剩余联调：配置并实测具体模型；B 提供带用户/版本检查的 EvidenceRetriever，C 提供实际索引检索；多页含空白页 PDF 上传后从原文到分析再到前端核对引用，并验证解析失败与版本更新/删除。现阶段不修改 API 的 501 或能力开关来假装全链路可用。负责人验收前 Issue #9 保持未完成。
 
 代码、提示词、测试与本文使用 Codex 辅助编写，提交成员需理解、核验和维护。PR 记录实际执行的检查与限制；不得把离线演示当成真实模型效果或 PDF 全链路验收。
+
+## M2 接入：计划生成与持久化恢复（B↔D 契约）
+
+> 本节由 B（Issue #24）补充，对应 Issue #26。B 的 Worker（`backend/app/worker.py` 的 `run_plan` / `run_resume`）通过 outbox 触发后，惰性导入 D 的两个异步入口；以下签名以 B 侧实现为准，PR #28 即为参照实现。
+
+### D 需要提供的两个入口
+
+**1. `app.agent.plan.generate_plan_draft`（计划草稿）**
+
+```python
+async def generate_plan_draft(
+    *, user_id: str,
+    plan: dict,       # plans 集合行：id、analysis_id、execution_id、deadline（ISO 日期字符串）、timezone、daily_minutes
+    analysis: dict,   # analyses 集合行（status 已校验为 ready）：requirement_snapshot、matches、document_versions
+    settings: Settings,
+) -> PlanDraftOutcome
+```
+
+返回对象字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `draft_tasks` | list | 必填、不得为空。每项含 `title`（非空）、`requirement_ids`（list[str]）、`scheduled_date`（date 或 ISO 字符串）、`estimated_minutes`（int ≥ 1）、`source_refs`（可空；每项 `{document_id?, version?, chunk_id?}`） |
+| `interrupt_id` | str | 可选；缺省时 B 生成 |
+| `checkpoint_id` | str | 可选；缺省时 B 生成 |
+
+B 收到结果后保存草稿并把执行停在 `waiting_for_input`（`pending_input.kind="plan_confirmation"`，附 `plan_id`）。草稿为空或保存冲突按生成失败处理（对外固定文案，不暴露异常细节）。
+
+**2. `app.agent.resume.resume_execution`（图恢复）**
+
+```python
+async def resume_execution(
+    *, user_id: str,
+    execution_id: str,
+    resume_input: dict,  # execution_inputs 集合行：kind（clarification/plan_confirmation）、
+                         # answer {text, continue_without_evidence, document_ids}、document_versions、
+                         # interrupt_id、checkpoint_id
+    settings: Settings,
+) -> ResumeOutcome
+```
+
+返回对象字段：
+
+| status | 还需携带 |
+| --- | --- |
+| `"waiting_for_input"` | `pending_input`：`{kind, interrupt_id, checkpoint_id, question?, plan_id?}` |
+| `"succeeded"` | `result_type`（`analysis`/`plan`/`document`）与 `result_id` |
+| `"failed"` | `error_message`（可直接给用户看的一句话） |
+
+### 双方不变式
+
+- **B 拥有全部持久化**：D 的入口不直接写 MongoDB、队列或存储；状态转换、事件流（SSE）、输入记录与投递都由 B 完成。D 若需跨暂停保留图状态，用 execution_id/interrupt_id/checkpoint_id 自行存 checkpoint（文件或自有集合），B 调用前已校验 interrupt/checkpoint 与用户归属。
+- **至少一次调用**：outbox 保证消息至少到达一次，重复投递由 B 的状态守卫拦截，但 D 的恢复入口仍应按幂等实现（同 checkpoint 的重复恢复不重复产生副作用）。
+- **确认后不重写**：计划确认后的恢复不得重新生成或改写已确认内容。
+- **错误不伪装**：入口抛异常或返回 failed 均可，B 统一映射为任务失败（`PLAN_GENERATION_FAILED` / `RESUME_FAILED`），文案由 B 固定，D 不返回堆栈或原始模型响应。
+
+### 联调步骤
+
+1. D 先交付合成替身（不调用真实模型）使 `careerpilot.run_plan` / `careerpilot.resume_execution` 全链路可跑，B 侧已有对应单测可参照（`backend/tests/test_worker_m2.py`）。
+2. 再接入真实模型与真实检索，按 #26 验收清单逐条过。
