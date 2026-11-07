@@ -13,8 +13,10 @@ from app.api.routes import router
 from app.config import Settings, get_settings
 from app.schemas.common import Envelope, ErrorBody, ErrorDetail, ErrorEnvelope
 from app.schemas.system import Capabilities, Liveness, Readiness
+from app.services.dispatch import sweep_pending_dispatches
 from app.services.executions import sweep_expired_executions
 from app.services.readiness import check_dependencies
+from app.services.tasks import sweep_pending_purges
 
 
 def _recovery_loop(settings: Settings, stop: Event) -> None:
@@ -24,6 +26,16 @@ def _recovery_loop(settings: Settings, stop: Event) -> None:
             sweep_expired_executions(settings)
         except Exception:  # noqa: BLE001 - database outage must not stop the API
             logging.getLogger(__name__).exception("Execution recovery sweep failed")
+        try:
+            # Outbox republish (M2): rows left pending by a crashed publish.
+            sweep_pending_dispatches(settings)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("Dispatch outbox sweep failed")
+        try:
+            # Purge retries (M2): deleted documents whose cleanup never ran.
+            sweep_pending_purges(settings)
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception("Purge sweep failed")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -44,12 +56,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(
         lifespan=lifespan,
         title="CareerPilot API",
-        version="0.1.0",
+        version="0.2.0",
         description=(
-            "Local M1 development. Login, /me, jobs, document upload with "
-            "indexing executions, evidence lookup and the analysis flow are "
-            "implemented; C's RAG pipeline and D's agent integrate via the "
-            "workers on the integration branch."
+            "Local development. M1 (login, /me, jobs, document upload with "
+            "indexing, evidence lookup, analysis flow) is live; M2 adds "
+            "document versions and soft delete with retryable purge, "
+            "authenticated SSE with sequence replay, the dispatch outbox, "
+            "idempotent resume, and the plan draft/confirm flow with "
+            "transactional task persistence."
         ),
         responses={
             404: {"model": ErrorEnvelope, "description": "Resource not found"},

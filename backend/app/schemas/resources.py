@@ -1,3 +1,4 @@
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, StringConstraints, field_validator, model_validator
@@ -24,6 +25,19 @@ class UserResult(ContractModel):
     display_name: str
 
 
+class ExtractedPage(ContractModel):
+    page: int = Field(ge=1)
+    text: str
+
+
+class DocumentExtraction(ContractModel):
+    """当前版本的可预览提取内容；PDF 保留原始页码（dev/03）。"""
+
+    kind: Literal["text", "pdf"]
+    text: str | None = None
+    pages: list[ExtractedPage] | None = None
+
+
 class DocumentResult(ContractModel):
     id: str
     kind: Literal["resume", "project"]
@@ -31,6 +45,8 @@ class DocumentResult(ContractModel):
     current_version: int = Field(ge=1)
     status: Literal["uploaded", "processing", "ready", "failed", "deleted"]
     error: str | None = None
+    # GET /documents/{id} 附带当前版本的提取结果（dev/04）；列表不携带。
+    extraction: DocumentExtraction | None = None
 
 
 class DocumentPage(ContractModel):
@@ -42,6 +58,38 @@ class DocumentAccepted(ContractModel):
     document_id: str
     execution_id: str
     status: Literal["processing"] = "processing"
+
+
+class DocumentDeleted(ContractModel):
+    """DELETE /documents/{id} 的 202 响应：删除已生效，清理异步进行。"""
+
+    document_id: str
+    status: Literal["deleted"] = "deleted"
+    purge_status: Literal["pending", "done", "failed"]
+
+
+class DocumentTextUpdate(ContractModel):
+    """PUT /documents/{id}/text：编辑提取文本并生成新版本。"""
+
+    extracted_text: str = Field(min_length=1, max_length=10 * 1024 * 1024)
+    expected_version: int = Field(ge=1)
+
+    @field_validator("extracted_text")
+    @classmethod
+    def reject_blank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("提取文本不能只包含空白字符")
+        return value
+
+
+class ExpectedVersion(ContractModel):
+    expected_version: int = Field(ge=1)
+
+
+class DocumentVersionAccepted(ContractModel):
+    document_id: str
+    version: int = Field(ge=1)
+    execution_id: str
 
 
 class JobCreate(ContractModel):
@@ -110,3 +158,99 @@ class ExecutionResult(ContractModel):
         if self.status != "failed" and self.error is not None:
             raise ValueError("only failed can have an error")
         return self
+
+
+class ResumeAnswer(ContractModel):
+    """POST /executions/{id}/resume 的用户回答（dev/04 M2）。
+
+    自由文本属于待核实补充，不自动升级为有文档证据的经历；为空时必须
+    显式选择 continue_without_evidence 或提供新上传并就绪的资料。
+    """
+
+    text: str = Field(default="", max_length=8000)
+    continue_without_evidence: bool = False
+    document_ids: list[str] = Field(default_factory=list, max_length=20)
+
+    @model_validator(mode="after")
+    def validate_answer(self):
+        if any(not item.strip() for item in self.document_ids):
+            raise ValueError("document_ids 不能包含空白项")
+        if len(set(self.document_ids)) != len(self.document_ids):
+            raise ValueError("document_ids 不能重复")
+        if not self.text.strip() and not self.continue_without_evidence and not self.document_ids:
+            raise ValueError(
+                "回答为空时必须选择 continue_without_evidence 或提供新资料 document_ids"
+            )
+        return self
+
+
+class ResumeRequest(ContractModel):
+    interrupt_id: str = Field(min_length=1)
+    checkpoint_id: str = Field(min_length=1)
+    answer: ResumeAnswer
+
+
+class PlanCreate(ContractModel):
+    """POST /plans：从一份就绪且未过期的分析生成准备计划草稿。"""
+
+    analysis_id: str = Field(min_length=1)
+    deadline: date
+    timezone: str = Field(min_length=1, max_length=64)
+    daily_minutes: int = Field(ge=1, le=1440)
+
+
+class EvidenceRefLike(ContractModel):
+    """草稿任务引用的资料来源（chunk 定位，可选）。"""
+
+    document_id: str | None = None
+    version: int | None = Field(default=None, ge=1)
+    chunk_id: str | None = None
+
+
+class PlanDraftTask(ContractModel):
+    """计划草稿任务（D 生成，确认前不成为正式任务）。"""
+
+    title: str = Field(min_length=1)
+    requirement_ids: list[str] = Field(default_factory=list)
+    scheduled_date: date
+    estimated_minutes: int = Field(ge=1)
+    source_refs: list[EvidenceRefLike] = Field(default_factory=list)
+
+
+class PlanTask(ContractModel):
+    """确认后的正式任务（稳定 ID，幂等写入）。"""
+
+    id: str
+    plan_id: str
+    title: str
+    requirement_ids: list[str]
+    scheduled_date: date
+    estimated_minutes: int = Field(ge=1)
+    status: Literal["todo", "in_progress", "done"]
+    source_refs: list[EvidenceRefLike] = Field(default_factory=list)
+
+
+class PlanResult(ContractModel):
+    id: str
+    analysis_id: str
+    execution_id: str
+    status: Literal["draft", "confirmed"]
+    deadline: date
+    timezone: str
+    daily_minutes: int = Field(ge=1, le=1440)
+    draft_tasks: list[PlanDraftTask] = Field(default_factory=list)
+    tasks: list[PlanTask] | None = None
+    confirmed_at: datetime | None = None
+    created_at: datetime
+
+
+class PlanConfirmed(ContractModel):
+    """POST /plans/{id}/confirm 的 200 响应；重放返回同一结果。"""
+
+    plan: PlanResult
+    execution_id: str
+    resumed: bool
+
+
+class PlanTaskStatusUpdate(ContractModel):
+    status: Literal["todo", "in_progress", "done"]

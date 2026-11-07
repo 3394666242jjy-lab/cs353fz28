@@ -42,7 +42,8 @@ jobs:
           RUN_MONGO_AUTH_TESTS: "1"
           RUN_MONGO_JOB_TESTS: "1"
           RUN_MONGO_STORAGE_TESTS: "1"
-        run: uv run pytest tests/test_auth_integration.py tests/test_jobs_integration.py tests/test_data_integration.py -q
+          RUN_MONGO_M2_TESTS: "1"
+        run: uv run pytest tests/test_auth_integration.py tests/test_jobs_integration.py tests/test_data_integration.py tests/test_m2_integration.py -q
       - name: Show infrastructure diagnostics on failure
         if: failure()
         run: |
