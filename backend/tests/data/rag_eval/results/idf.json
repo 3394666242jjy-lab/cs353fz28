@@ -2,7 +2,7 @@
   "avg_doc_len": 224.35897435897436,
   "b": 0.75,
   "chunk_count": 39,
-  "corpus_questions_sha256": "257377334ebb20578d9752fee016f080b2b32a77f91835e6c574702af23524a9",
+  "corpus_questions_sha256": "46c987b06e0e790200eff1b80188cab7134c8e9f75adbb8e52fdf6b72526b0d1",
   "default_idf": 1.0,
   "idf": {
     "0.115.0": 3.283414346005772,
