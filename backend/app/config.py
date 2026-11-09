@@ -74,10 +74,17 @@ class Settings(BaseSettings):
 
     # Rerank 服务（成员 C，M2）：只服务于 hybrid_rerank 档位。未配置时必须显式报错，
     # 不得静默降级——把未重排的结果记成重排结果会污染评测结论。
-    rerank_base_url: str = ""
+    # 使用阿里云百炼的**原生** rerank 端点（兼容端点没有 /rerank 路径）；
+    # 密钥留空时回退到 EMBEDDING_API_KEY，因为两者本就共用同一个百炼 Key。
+    rerank_url: str = (
+        "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    )
     rerank_api_key: SecretStr | None = None
-    rerank_model: str = ""
+    # 账号可用的重排模型；qwen-rerank 在部分账号上返回 403（未开通），需按账号实测。
+    rerank_model: str = "gte-rerank-v2"
     rerank_timeout_seconds: float = Field(default=15.0, ge=0.1, le=60.0)
+    rerank_max_retries: int = Field(default=2, ge=0, le=5)
+    rerank_retry_backoff_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
 
 
 @lru_cache
