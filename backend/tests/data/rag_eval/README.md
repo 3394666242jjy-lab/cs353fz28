@@ -26,24 +26,48 @@ rag_eval/
 ## questions.jsonl 字段
 
 ```json
-{"id": "q001",
- "user_id": "user_eval_a",
- "query": "候选人在哪个项目里用了 Qdrant？",
+{"id": "q_alpha_01",
+ "user_id": "user_eval_alpha",
+ "query": "候选人用的服务框架是哪个版本？",
  "kind": "answerable",
- "relevant_chunk_ids": ["chunk_..."],
- "document_versions": [{"document_id": "doc_...", "version": 1}],
- "note": "标注依据：第三段明确提到 Qdrant"}
+ "style": "literal",
+ "relevant_chunk_ids": ["385c27cd-..."],
+ "document_versions": [{"document_id": "doc_alpha_resume", "version": 1}],
+ "note": "标注依据：FastAPI 0.115.0 出现在 resume v1"}
 ```
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `id` | 是 | 全局唯一，负例用 `neg_` 前缀便于统计 |
+| `id` | 是 | 全局唯一；`q_<user>_<n>` 为可回答，`neg_<user>_<n>` 为负例 |
 | `user_id` | 是 | 检索发起人；跨用户负例填发起人，相关 chunk 属于他人 |
 | `query` | 是 | 问题原文 |
-| `kind` | 是 | `answerable` / `no_evidence` / `cross_user` / `deleted` / `old_version` |
-| `relevant_chunk_ids` | answerable 必填 | 人工标注的相关 chunk；其余类别为空数组 |
+| `kind` | 是 | `answerable` / `no_evidence` / `cross_user` / `old_version` / `deleted` |
+| `style` | 是 | `literal`（含字面 token，hybrid 应占优）/ `paraphrase`（只能语义命中）/ `negative` |
+| `expect` | 负例必填 | `empty`（结果必须为空）或 `forbidden_absent`（允许有结果，但旧版本 chunk 不得出现） |
+| `relevant_chunk_ids` | answerable 必填 | 人工标注的相关 chunk，长度为 1 |
+| `forbidden_chunk_ids` | `forbidden_absent` 必填 | 被取代版本里绝不能出现的 chunk |
 | `document_versions` | 是 | 该问题应传入检索的钉住版本，模拟 B 的快照行为 |
 | `note` | 是 | 标注依据，便于复核与争议追溯 |
+
+`old_version` 负例必须用 `forbidden_absent` 而不能用 `empty`：语义相近的**新版本**
+chunk 本就应该被召回，用"结果为空"去要求它属于误判。
+
+## 当前数据集构成
+
+由 `scripts/gen_rag_eval_corpus.py` 确定性生成（改语料或标注请改脚本后重新生成，
+不要手改产物）：
+
+| 项 | 规模 |
+| --- | --- |
+| 用户 | 3 个，互不相关技术栈（Python / Java / 前端） |
+| 文档 | 每用户 5 份，其中 1 份含 v1、v2 |
+| chunk | 每用户 13 个（`CHUNK_MAX_CHARS=500` 下） |
+| 问题 | 60 个：36 可回答 + 24 负例 |
+| 负例分布 | 无证据 9、跨用户 6、旧版本 6、已删除 3 |
+| PDF | 每用户 1 份三页，第 2 页空白（验证空白页之后的页码定位） |
+
+标注的 `chunk_id` 由生成器直接调用 `parse_document` + `chunk_document` 再经
+`make_chunk_id` 派生，与运行期 `index_document` 完全一致，不会漂移。
 
 ## 使用约束
 
