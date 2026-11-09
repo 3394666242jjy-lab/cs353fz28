@@ -13,6 +13,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.config import Settings, get_settings
+from app.rag.bm25 import Bm25Encoder
 from app.rag.chunking import (
     PARSER_VERSION,
     PDF_PARSER_VERSION,
@@ -93,11 +94,15 @@ async def index_document(
     embedder: EmbeddingProvider | None = None,
     store: VectorStore | None = None,
     settings: Settings | None = None,
+    sparse_encoder: Bm25Encoder | None = None,
 ) -> IndexedDocument:
     """把一个新文档版本入库：解析、切分、向量化、写入，返回版本元数据。
 
     执行顺序刻意安排为"先向量化、后写存储"：模型调用失败时旧索引原样保留，
     不会把一个好版本打成空；依赖（embedder/store/settings）均可注入以便测试。
+
+    ``sparse_encoder`` 给出时同时写入 BM25 关键词稀疏向量，供混合检索使用；不给则
+    只写稠密向量，与 M1 行为一致。
     """
     settings = settings or get_settings()
     embedder = embedder or get_embedding_provider(settings)
@@ -136,8 +141,9 @@ async def index_document(
             user_id=user_id,
             index_version=index_version,
             vector=vector,
+            sparse=(sparse_encoder.encode_document(text) if sparse_encoder else None),
         )
-        for ordinal, (_, vector) in enumerate(zip(chunks, vectors, strict=True))
+        for ordinal, ((text, _), vector) in enumerate(zip(chunks, vectors, strict=True))
     ]
     await store.replace_document_points(
         user_id=user_id, document_id=document_id, version=version, points=points

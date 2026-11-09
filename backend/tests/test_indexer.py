@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from app.config import Settings
+from app.rag.bm25 import Bm25Encoder
 from app.rag.chunking import PARSER_VERSION
 from app.rag.embeddings import EmbeddingError, HttpEmbeddingProvider
 from app.rag.indexer import build_index_version, index_document, make_chunk_id
@@ -152,6 +153,24 @@ def test_project_demo_end_to_end_index_build():
     assert all(
         entry["payload"]["index_version"] == report.index_version for entry in upsert_body["points"]
     )
+
+
+def test_sparse_vectors_are_written_only_when_encoder_is_provided():
+    """提供 BM25 编码器时写入关键词稀疏向量；不提供时保持 M1 的纯稠密写入。"""
+    handler = RoutingHandler()
+    embedder, store, config = pipeline(handler)
+    encoder = Bm25Encoder.fit(["任意参考语料，用于提供 idf 统计"])
+
+    run_index(handler, embedder=embedder, store=store, config=config, sparse_encoder=encoder)
+    with_sparse = json.loads(handler.calls[-1].content)["points"]
+    assert all("sparse" in entry["vector"] for entry in with_sparse)
+    assert all(len(entry["vector"]["sparse"]["indices"]) > 0 for entry in with_sparse)
+
+    plain_handler = RoutingHandler()
+    embedder, store, config = pipeline(plain_handler)
+    run_index(plain_handler, embedder=embedder, store=store, config=config)
+    without_sparse = json.loads(plain_handler.calls[-1].content)["points"]
+    assert all(set(entry["vector"]) == {"dense"} for entry in without_sparse)
 
 
 def test_chunk_ids_for_same_version_are_deterministic():

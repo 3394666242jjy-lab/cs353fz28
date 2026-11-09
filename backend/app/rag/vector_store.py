@@ -23,6 +23,7 @@ import httpx
 from pydantic import Field, model_validator
 
 from app.config import Settings, get_settings
+from app.rag.bm25 import SparseVector
 from app.schemas.analysis import DocumentVersion
 from app.schemas.common import ContractModel
 
@@ -59,7 +60,11 @@ class VectorStoreError(RuntimeError):
 
 
 class ChunkPoint(ContractModel):
-    """一个待入库的 chunk 点。``vector`` 长度必须等于配置的 embedding 维度。"""
+    """一个待入库的 chunk 点。``vector`` 长度必须等于配置的 embedding 维度。
+
+    ``sparse`` 是可选的 BM25 关键词表示：M1 的稠密链路不填它也能正常工作，
+    只有启用混合检索的索引才写入。
+    """
 
     chunk_id: str = Field(min_length=1)
     document_id: str = Field(min_length=1)
@@ -68,6 +73,7 @@ class ChunkPoint(ContractModel):
     user_id: str | None = None
     index_version: str = Field(min_length=1)
     vector: list[float] = Field(min_length=1)
+    sparse: SparseVector | None = None
     deleted: bool = False
 
     @model_validator(mode="after")
@@ -139,6 +145,17 @@ class VectorStore(Protocol):
         top_k: int = 5,
     ) -> list[SearchHit]:
         """为一个用户召回候选 chunk，可限定文档版本；结果保持 store 返回顺序。"""
+        ...
+
+    async def search_sparse(
+        self,
+        *,
+        user_id: str,
+        sparse_vector: SparseVector,
+        document_versions: list[DocumentVersion] | None = None,
+        top_k: int = 5,
+    ) -> list[SearchHit]:
+        """关键词稀疏通道召回；过滤语义必须与稠密检索一致。"""
         ...
 
 
@@ -230,7 +247,7 @@ class QdrantVectorStore:
             "points": [
                 {
                     "id": point_id(point),
-                    "vector": {DENSE_VECTOR_NAME: point.vector},
+                    "vector": self._vector_payload(point),
                     "payload": point.payload(),
                 }
                 for point in points
@@ -245,6 +262,18 @@ class QdrantVectorStore:
         )
         if response.status_code != 200:
             raise self._status_error(response)
+
+    @staticmethod
+    def _vector_payload(point: ChunkPoint) -> dict:
+        """组装命名字段向量：稠密恒有，稀疏在调用方提供时一并写入。
+
+        稀疏向量可选是刻意的：M1 的稠密链路与既有索引不需要改造就能继续工作，
+        只有启用混合检索时才写入关键词表示。
+        """
+        vectors: dict = {DENSE_VECTOR_NAME: point.vector}
+        if point.sparse is not None and len(point.sparse) > 0:
+            vectors[SPARSE_VECTOR_NAME] = point.sparse.as_qdrant()
+        return vectors
 
     async def replace_document_points(
         self,
@@ -305,13 +334,50 @@ class QdrantVectorStore:
         document_versions: list[DocumentVersion] | None = None,
         top_k: int = 5,
     ) -> list[SearchHit]:
-        """按用户隔离执行向量召回，可选限定文档版本，返回 payload 组装的命中列表。"""
-        if document_versions == []:
-            return []
+        """按用户隔离执行稠密向量召回，可选限定文档版本。"""
         if len(vector) != self._dimension:
             raise VectorStoreError(
                 f"查询向量为 {len(vector)} 维，应为 {self._dimension} 维", retryable=False
             )
+        return await self._search(
+            user_id=user_id,
+            named_vector=DENSE_VECTOR_NAME,
+            vector=vector,
+            document_versions=document_versions,
+            top_k=top_k,
+        )
+
+    async def search_sparse(
+        self,
+        *,
+        user_id: str,
+        sparse_vector: SparseVector,
+        document_versions: list[DocumentVersion] | None = None,
+        top_k: int = 5,
+    ) -> list[SearchHit]:
+        """按用户隔离执行关键词稀疏召回；过滤语义与稠密检索完全一致。"""
+        if len(sparse_vector) == 0:
+            return []
+        return await self._search(
+            user_id=user_id,
+            named_vector=SPARSE_VECTOR_NAME,
+            vector=sparse_vector.as_qdrant(),
+            document_versions=document_versions,
+            top_k=top_k,
+        )
+
+    async def _search(
+        self,
+        *,
+        user_id: str,
+        named_vector: str,
+        vector,
+        document_versions: list[DocumentVersion] | None,
+        top_k: int,
+    ) -> list[SearchHit]:
+        """两个检索通道共用同一套过滤与解析，避免隔离条件出现分叉。"""
+        if document_versions == []:
+            return []
         # 所有权过滤永远内置：user_id 精确匹配 + 排除已删除点。
         must: list[dict] = [
             {"key": "user_id", "match": {"value": user_id}},
@@ -333,7 +399,7 @@ class QdrantVectorStore:
                 }
             )
         body = {
-            "vector": {"name": DENSE_VECTOR_NAME, "vector": vector},
+            "vector": {"name": named_vector, "vector": vector},
             "filter": {"must": must},
             "limit": top_k,
             "with_payload": True,

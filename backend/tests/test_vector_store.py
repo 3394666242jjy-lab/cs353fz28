@@ -12,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.rag.bm25 import SparseVector
 from app.rag.vector_store import (
     ChunkPoint,
     QdrantVectorStore,
@@ -73,6 +74,20 @@ def collection_config(size: int = DIMENSION, *, sparse: bool = True) -> httpx.Re
 def ok() -> httpx.Response:
     """通用成功响应。"""
     return httpx.Response(200, json={"result": {"status": "ok"}})
+
+
+def raw_hit(chunk_id: str, score: float, version: int = 1) -> dict:
+    """构造一条 Qdrant 检索响应的原始条目。"""
+    return {
+        "id": chunk_id,
+        "score": score,
+        "payload": {
+            "chunk_id": chunk_id,
+            "document_id": "doc_demo",
+            "version": version,
+            "corpus": "personal",
+        },
+    }
 
 
 def test_ensure_collection_creates_named_vectors_and_payload_indexes():
@@ -225,6 +240,74 @@ def test_upsert_with_no_points_does_not_call_the_store():
         raise AssertionError(f"store must not be called: {request.url}")
 
     assert asyncio.run(store(handler).upsert_chunks([])) is None
+
+
+def test_upsert_writes_sparse_vector_alongside_dense():
+    """提供稀疏表示时同时写入两个命名字段，供混合检索使用。"""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return ok()
+
+    sparse = SparseVector(indices=(11, 22), values=(1.5, 0.5))
+    asyncio.run(store(handler).upsert_chunks([point(sparse=sparse)]))
+
+    vectors = bodies[0]["points"][0]["vector"]
+    assert set(vectors) == {"dense", "sparse"}
+    assert vectors["sparse"] == {"indices": [11, 22], "values": [1.5, 0.5]}
+
+
+def test_upsert_without_sparse_keeps_m1_payload():
+    """没有稀疏表示时只写稠密字段——M1 链路无需改造即可继续工作。"""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return ok()
+
+    asyncio.run(store(handler).upsert_chunks([point()]))
+
+    assert bodies[0]["points"][0]["vector"] == {"dense": [0.1] * DIMENSION}
+
+
+def test_search_sparse_uses_named_field_and_same_owner_filter():
+    """稀疏检索走 sparse 命名字段，过滤条件与稠密检索一致。"""
+    bodies: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"result": [raw_hit("chunk_a", 3.2)]})
+
+    hits = asyncio.run(
+        store(handler).search_sparse(
+            user_id="user_c",
+            sparse_vector=SparseVector(indices=(1,), values=(2.0,)),
+            top_k=3,
+        )
+    )
+
+    assert bodies[0]["vector"] == {
+        "name": "sparse",
+        "vector": {"indices": [1], "values": [2.0]},
+    }
+    assert bodies[0]["filter"]["must"][0] == {"key": "user_id", "match": {"value": "user_c"}}
+    assert [hit.chunk_id for hit in hits] == ["chunk_a"]
+
+
+def test_search_sparse_with_empty_vector_returns_nothing_without_a_call():
+    """空稀疏向量（例如查询里没有可用词项）直接返回空，不发请求。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"store must not be called: {request.url}")
+
+    hits = asyncio.run(
+        store(handler).search_sparse(
+            user_id="user_c", sparse_vector=SparseVector(indices=(), values=()), top_k=3
+        )
+    )
+
+    assert hits == []
 
 
 def test_upsert_rejects_wrong_dimension_before_sending():
