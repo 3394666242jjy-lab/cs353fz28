@@ -7,6 +7,7 @@ the storage root before any read or write.
 """
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from uuid import uuid4
 
@@ -83,3 +84,21 @@ def save_extracted_pages(
     payload = {"pages": [{"page": i, "text": "\n".join(lines)} for i, lines in enumerate(pages, 1)]}
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8", newline="\n")
     return storage_key
+
+
+def read_text_object(settings: Settings, storage_key: str) -> str | None:
+    """Return a stored UTF-8 object, or None when it is missing."""
+    path = _resolve(settings, storage_key)
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def remove_extracted_versions(
+    settings: Settings, user_id: str, document_id: str, storage_keys: Iterable[str]
+) -> None:
+    """Delete versioned extraction objects of a purged document; prunes empty dirs."""
+    for storage_key in storage_keys:
+        remove_upload(settings, storage_key)
+    # remove_upload prunes parents; nothing else to do here. The explicit
+    # signature documents that only adapter-owned keys may be deleted.
