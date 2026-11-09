@@ -64,7 +64,7 @@ class CheckpointStore:
         with self.connection() as db:
             return self.read(db, user_id, execution_id)
 
-    def claim(self, *, user_id, execution_id, fingerprint, plan_id, budget):
+    def claim(self, *, user_id, execution_id, fingerprint, plan_id, budget, document_ids=None):
         if not user_id or not execution_id:
             raise AgentError("INVALID_INPUT", "保存进度需要有效的用户和执行编号。")
         with self.connection() as db:
@@ -73,6 +73,8 @@ class CheckpointStore:
             ).fetchone()
             if existing:
                 state = self.read(db, user_id, execution_id)
+                if state["status"] == "invalidated":
+                    raise AgentError("STALE_CHECKPOINT", "资料已删除，计划进度不可恢复。")
                 if state["fingerprint"] != fingerprint:
                     raise AgentError("STALE_CHECKPOINT", "执行来源已变化，请重新创建计划。")
                 if state["status"] not in {"waiting", "succeeded"}:
@@ -87,6 +89,7 @@ class CheckpointStore:
                 plan_id=plan_id,
                 status="generating",
                 budget=budget,
+                document_ids=document_ids or [],
                 checkpoint_id=f"chk_{uuid4().hex}",
                 interrupt_id=f"int_{uuid4().hex}",
             )
@@ -104,6 +107,40 @@ class CheckpointStore:
             state.update(status="waiting", draft_tasks=tasks)
             self.write(db, state)
             return state
+
+    def invalidate_document(self, user_id, document_id):
+        """删除快照中的原文和派生草稿，保留不可恢复的状态和累计预算。"""
+        with self.connection() as db:
+            tables = {
+                row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+            for table in ("checkpoints", "dialogues"):
+                if table not in tables:
+                    continue
+                rows = db.execute(f"SELECT execution, body FROM {table}").fetchall()
+                for execution, raw in rows:
+                    state = json.loads(raw)
+                    docs = set(state.get("document_ids", [])) | {
+                        v["document_id"] for v in state.get("versions", [])
+                    }
+                    if state.get("user_id") != user_id or document_id not in docs:
+                        continue
+                    clean = {
+                        k: state[k]
+                        for k in (
+                            "user_id",
+                            "execution_id",
+                            "budget",
+                            "checkpoint_id",
+                            "interrupt_id",
+                        )
+                        if k in state
+                    }
+                    clean["status"] = "invalidated"
+                    db.execute(
+                        f"UPDATE {table} SET body=? WHERE execution=?",
+                        (json.dumps(clean), execution),
+                    )
 
     def finish(self, user_id, execution_id, resume_input):
         with self.connection() as db:

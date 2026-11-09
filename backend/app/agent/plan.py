@@ -137,7 +137,16 @@ async def build_plan_draft(
 async def generate_plan_draft(*, user_id, plan, analysis, settings) -> PlanDraftOutcome:
     """B Worker 约定入口；模型缺配置时明确失败，不降级为合成结果。"""
     agent_settings = AgentSettings()
-    return await persistent_plan_draft(
+    from app.schemas.analysis import DocumentVersion
+    from app.services.agent_bridge import validate_sources
+    from app.services.jobs import load_job
+
+    versions = [DocumentVersion.model_validate(v) for v in analysis["document_versions"]]
+    job = load_job(settings, user_id, analysis["job_id"])
+    if job is None or job.version != analysis["job_version"]:
+        raise AgentError("STALE_CHECKPOINT", "岗位来源已变化。")
+    validate_sources(settings, user_id, versions, [])
+    result = await persistent_plan_draft(
         user_id=user_id,
         plan=plan,
         analysis=analysis,
@@ -145,6 +154,8 @@ async def generate_plan_draft(*, user_id, plan, analysis, settings) -> PlanDraft
         agent_settings=agent_settings,
         store=CheckpointStore(settings.local_storage_dir),
     )
+    validate_sources(settings, user_id, versions, [])
+    return result
 
 
 async def persistent_plan_draft(*, user_id, plan, analysis, model, agent_settings, store):
@@ -181,6 +192,7 @@ async def persistent_plan_draft(*, user_id, plan, analysis, model, agent_setting
             "active_seconds_reserved": agent_settings.model_timeout_seconds,
             "tool_calls_used": 0,
         },
+        document_ids=[v["document_id"] for v in analysis.get("document_versions", [])],
     )
     if claimed:
         outcome = await build_plan_draft(

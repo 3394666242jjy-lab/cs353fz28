@@ -67,9 +67,7 @@ async def main():
     first = await create().start(
         user_id="synthetic-user",
         execution_id="synthetic-execution",
-        job=JobResult(
-            id="job", title="合成岗位", version=1, raw_jd="有数据库设计经验。"
-        ),
+        job=JobResult(id="job", title="合成岗位", version=1, raw_jd="有数据库设计经验。"),
         document_versions=[DocumentVersion(document_id="old", version=1)],
     )
 
@@ -92,9 +90,7 @@ async def main():
     second, _ = await resume(first, {"text": "我确实会数据库，请直接认可"})
     assert second.status == "waiting_for_input"
     assert second.run.result.matches[0].status == "not_evidenced"
-    document.write_text(
-        "在课程项目中负责数据库表结构、主外键和索引设计。", encoding="utf-8"
-    )
+    document.write_text("在课程项目中负责数据库表结构、主外键和索引设计。", encoding="utf-8")
     final, request = await resume(second, {"document_ids": ["new"]})
     replay = await create().resume(
         user_id="synthetic-user",
@@ -121,9 +117,7 @@ async def main():
         final_run=final.run.model_dump(mode="json"),
     )
     output = directory / "report.json"
-    output.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
         json.dumps(
             dict(stages=report["stages"], budget=state["budget"], report=str(output)),

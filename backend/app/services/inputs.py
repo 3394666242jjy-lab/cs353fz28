@@ -66,7 +66,12 @@ def record_execution_input(
 
     The caller must have run :func:`ensure_input_indexes` beforehand.
     """
-    content_hash = answer_content_hash(answer)
+    hash_payload = (
+        {**answer, "document_versions": document_versions or []}
+        if kind == "clarification"
+        else answer
+    )
+    content_hash = answer_content_hash(hash_payload)
     input_id = f"inp_{uuid4().hex}"
     try:
         database.execution_inputs.insert_one(

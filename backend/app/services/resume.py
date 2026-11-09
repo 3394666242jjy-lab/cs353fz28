@@ -63,6 +63,8 @@ def resume_execution(
     content_hash = answer_content_hash({**answer_payload, "document_versions": document_versions})
     existing = get_execution_input(settings, user_id, execution_id, interrupt_id)
     if existing is not None:
+        if existing.get("checkpoint_id") != checkpoint_id:
+            raise ResumeError(409, "STALE_CHECKPOINT", "恢复标识已过期，请刷新任务状态。")
         # Idempotent fast path: same recorded answer → same acceptance.
         if existing["content_hash"] == content_hash:
             return execution_id
@@ -91,6 +93,30 @@ def resume_execution(
             or pending.get("checkpoint_id") != checkpoint_id
         ):
             raise ResumeError(409, "STALE_CHECKPOINT", "恢复标识已过期，请刷新任务状态后重试。")
+        if execution.get("type") == "analysis":
+            source = database.analyses.find_one(
+                {"id": execution["resource_id"], "user_id": user_id}, session=session
+            )
+            if source is None or source.get("status") != "pending":
+                raise ResumeError(409, "ANALYSIS_UNAVAILABLE", "分析已失效，不能恢复。")
+            job = database.jobs.find_one(
+                {"id": source["job_id"], "user_id": user_id}, session=session
+            )
+            if job is None or job["version"] != source["job_version"]:
+                raise ResumeError(409, "STALE_CHECKPOINT", "岗位来源已变化，不能恢复。")
+            supplied = {v["document_id"]: v["version"] for v in document_versions}
+            versions = {v["document_id"]: v["version"] for v in source["document_versions"]}
+            versions.update(supplied)
+            for doc_id, version in versions.items():
+                document = database.documents.find_one(
+                    {"id": doc_id, "user_id": user_id, "deleted_at": None}, session=session
+                )
+                if (
+                    document is None
+                    or document.get("status") != "ready"
+                    or document["current_version"] != version
+                ):
+                    raise ResumeError(409, "STALE_CHECKPOINT", "资料已更新、删除或尚未就绪。")
         input_id = record_execution_input(
             database,
             user_id=user_id,

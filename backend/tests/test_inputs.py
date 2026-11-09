@@ -57,7 +57,7 @@ def test_record_execution_input_replay_same_content_returns_existing(database):
     database.execution_inputs.insert_one.side_effect = DuplicateKeyError("dup")
     database.execution_inputs.find_one.return_value = {
         "id": "inp_existing",
-        "content_hash": answer_content_hash(answer),
+        "content_hash": answer_content_hash({**answer, "document_versions": []}),
     }
     assert (
         record_execution_input(

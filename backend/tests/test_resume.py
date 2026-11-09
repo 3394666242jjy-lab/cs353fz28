@@ -53,7 +53,7 @@ def test_resume_replay_same_input_returns_without_writes(settings, mocks, monkey
     content_hash = answer_content_hash({**_answer_payload(), "document_versions": []})
     monkeypatch.setattr(
         "app.services.resume.get_execution_input",
-        lambda *a: {"id": "inp_existing", "content_hash": content_hash},
+        lambda *a: {"id": "inp_existing", "checkpoint_id": "chk_1", "content_hash": content_hash},
     )
     assert (
         resume_execution(
@@ -74,7 +74,11 @@ def test_resume_replay_same_input_returns_without_writes(settings, mocks, monkey
 def test_resume_replay_different_input_conflicts(settings, mocks, monkeypatch):
     monkeypatch.setattr(
         "app.services.resume.get_execution_input",
-        lambda *a: {"id": "inp_existing", "content_hash": answer_content_hash({"text": "旧"})},
+        lambda *a: {
+            "id": "inp_existing",
+            "checkpoint_id": "chk_1",
+            "content_hash": answer_content_hash({"text": "旧"}),
+        },
     )
     with pytest.raises(InputConflictError):
         resume_execution(

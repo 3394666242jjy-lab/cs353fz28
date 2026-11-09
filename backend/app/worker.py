@@ -352,13 +352,13 @@ def _load_agent() -> Any:
     """Import member D's agent lazily; raises when it is not integrated yet."""
     try:
         from app.agent.config import get_agent_settings
-        from app.agent.pipeline import LangGraphAnalysisAgent
         from app.agent.provider import ChatCompletionModel
+        from app.services.agent_bridge import M2AnalysisAgent
     except ImportError as exc:
         raise RuntimeError("分析 Agent 模块（app.agent，成员 D）尚未集成") from exc
     agent_settings = get_agent_settings()
     agent_settings.check_provider()
-    return LangGraphAnalysisAgent(ChatCompletionModel(agent_settings))
+    return M2AnalysisAgent(ChatCompletionModel(agent_settings), agent_settings, settings)
 
 
 class _MongoEvidenceRetriever:
@@ -465,18 +465,43 @@ def run_analysis(settings_obj: Any, analysis_id: str, user_id: str, execution_id
                 set_analysis_failed(settings_obj, user_id, analysis_id, error=message)
             return
         agent = _load_agent()
+        if hasattr(agent, "business_settings"):
+            agent.business_settings = settings_obj
         retriever = _build_retriever(settings_obj)
         document_versions = [
             DocumentVersion.model_validate(item) for item in row["document_versions"]
         ]
-        result = asyncio.run(
-            agent.run_analysis(
-                user_id=user_id,
-                job=job,
-                document_versions=document_versions,
-                retriever=retriever,
+        if hasattr(agent, "run_analysis_or_pause"):
+            outcome = asyncio.run(
+                agent.run_analysis_or_pause(
+                    user_id=user_id,
+                    execution_id=execution_id,
+                    analysis_id=analysis_id,
+                    job=job,
+                    document_versions=document_versions,
+                    retriever=retriever,
+                )
             )
-        )
+            if outcome.status == "waiting_for_input":
+                if not transition_to_waiting(
+                    settings_obj,
+                    user_id,
+                    execution_id,
+                    expected_state_version=2,
+                    pending_input=outcome.pending_input,
+                ):
+                    raise RuntimeError("追问状态保存失败")
+                return
+            result = outcome.run.result
+        else:
+            result = asyncio.run(
+                agent.run_analysis(
+                    user_id=user_id,
+                    job=job,
+                    document_versions=document_versions,
+                    retriever=retriever,
+                )
+            )
         if not save_analysis_result(settings_obj, user_id, analysis_id, result):
             raise RuntimeError("分析结果保存失败：记录已被并发更新。")
     except Exception as exc:  # noqa: BLE001 - any failure must fail the execution
@@ -528,6 +553,9 @@ def _run_purge(settings_obj: Any, user_id: str, document_id: str) -> None:
     if document is None:
         # Already purged or never existed: the goal state is reached.
         return
+    from app.agent.checkpoints import CheckpointStore
+
+    CheckpointStore(settings_obj.local_storage_dir).invalidate_document(user_id, document_id)
     storage_keys: list[str] = []
     for version_row in list_document_versions(settings_obj, user_id, document_id):
         mark_chunks_deleted(settings_obj, user_id, document_id, version_row["version"])

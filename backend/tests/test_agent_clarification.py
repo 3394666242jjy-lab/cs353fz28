@@ -193,6 +193,18 @@ def test_budget_exhaustion_survives_reopen(environment):
     assert error.value.code == "BUDGET_EXCEEDED"
 
 
+def test_deleted_document_invalidates_snapshot_and_erases_derived_text(environment):
+    create, first, _, _ = environment
+    flow = create()
+    flow.store.invalidate_document("u", "old")
+    with flow.store.connection() as db:
+        state = flow.load(db, "u", "e")
+    assert state["status"] == "invalidated"
+    assert "run" not in state and "job" not in state
+    with pytest.raises(AgentError):
+        resume(create(), first, {"continue_without_evidence": True})
+
+
 def test_unrelated_document_version_cannot_change_during_upload(environment):
     create, first, model, _ = environment
     flow = create()

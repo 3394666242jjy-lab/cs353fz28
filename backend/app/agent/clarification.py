@@ -69,6 +69,8 @@ class ClarificationFlow:
     def reserve(self, user, execution, *, model_requests=0, tools=0, seconds=0):
         with self.store.connection() as db:
             state = self.load(db, user, execution)
+            if state["status"] != "running":
+                raise AgentError("STALE_CHECKPOINT", "执行进度已失效。")
             budget = state["budget"]
             limits = state["limits"]
             if (
@@ -151,6 +153,8 @@ class ClarificationFlow:
     ):
         with self.store.connection() as db:
             state = self.load(db, user, execution)
+            if state["status"] != "running":
+                raise AgentError("STALE_CHECKPOINT", "执行进度已失效。")
             missing = [m.requirement for m in run.result.matches if m.status != "supported"]
             state.update(
                 run=run.model_dump(mode="json"),
@@ -171,7 +175,7 @@ class ClarificationFlow:
             self.save(db, state)
             return self.outcome(state)
 
-    async def start(self, *, user_id, execution_id, job, document_versions):
+    async def start(self, *, user_id, execution_id, job, document_versions, analysis_id=None):
         if not user_id or not execution_id:
             raise AgentError("INVALID_INPUT", "追问需要用户和执行编号。")
         versions = await self.validate_sources(user_id, document_versions, [])
@@ -179,6 +183,8 @@ class ClarificationFlow:
         with self.store.connection() as db:
             if db.execute("SELECT 1 FROM dialogues WHERE execution=?", (execution_id,)).fetchone():
                 state = self.load(db, user_id, execution_id)
+                if state["status"] == "invalidated":
+                    raise AgentError("STALE_CHECKPOINT", "资料已删除，执行进度不可恢复。")
                 if state["fingerprint"] != digest(payload):
                     raise AgentError("STALE_CHECKPOINT", "分析输入已经变化。")
                 if state["status"] == "running":
@@ -187,6 +193,7 @@ class ClarificationFlow:
             state = dict(
                 user_id=user_id,
                 execution_id=execution_id,
+                analysis_id=analysis_id,
                 fingerprint=digest(payload),
                 **payload,
                 status="running",
@@ -219,6 +226,8 @@ class ClarificationFlow:
         fingerprint = digest(answer.model_dump())
         with self.store.connection() as db:
             before = self.load(db, user_id, execution_id)
+        if before["status"] == "invalidated":
+            raise AgentError("STALE_CHECKPOINT", "资料已删除，追问进度不可恢复。")
         versions = await self.validate_sources(
             user_id,
             [DocumentVersion.model_validate(v) for v in before["versions"]],

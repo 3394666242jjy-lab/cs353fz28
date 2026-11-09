@@ -1,7 +1,14 @@
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    StrictBool,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.common import ContractModel
 
@@ -168,11 +175,13 @@ class ResumeAnswer(ContractModel):
     """
 
     text: str = Field(default="", max_length=8000)
-    continue_without_evidence: bool = False
+    continue_without_evidence: StrictBool = False
     document_ids: list[str] = Field(default_factory=list, max_length=20)
 
     @model_validator(mode="after")
     def validate_answer(self):
+        if self.continue_without_evidence and self.document_ids:
+            raise ValueError("选择按现有资料继续时不能同时提交新资料")
         if any(not item.strip() for item in self.document_ids):
             raise ValueError("document_ids 不能包含空白项")
         if len(set(self.document_ids)) != len(self.document_ids):
@@ -196,7 +205,7 @@ class PlanCreate(ContractModel):
     analysis_id: str = Field(min_length=1)
     deadline: date
     timezone: str = Field(min_length=1, max_length=64)
-    daily_minutes: int = Field(ge=1, le=1440)
+    daily_minutes: int = Field(ge=1, le=1440, strict=True)
 
 
 class EvidenceRefLike(ContractModel):
