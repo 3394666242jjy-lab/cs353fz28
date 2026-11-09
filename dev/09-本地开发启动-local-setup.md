@@ -121,6 +121,15 @@ M1 要求有文本层 PDF 上传和 Python 后端解析，当前代码已接入�
 | `VECTOR_STORE_COLLECTION` | `careerpilot_chunks` | 可重建索引集合 |
 | `CHUNK_MAX_CHARS` | 500 | 切分目标字符数，进入 `chunking_config_version` |
 | `RETRIEVAL_TOP_K` | 5 | 证据候选默认返回数 |
+| `RETRIEVAL_STRATEGY` | `dense` | 三档检索：`dense` / `hybrid` / `hybrid_rerank`（M2） |
+| `HYBRID_SPARSE_WEIGHT` | `0.30` | 稀疏通道占比，三档对比必须锁定同一值；由开发集扫描得出，见 [13 第 5 节](13-M2检索策略与评测-rag-m2-spec.md) |
+| `HYBRID_CANDIDATES_PER_CHANNEL` | 20 | 融合前每路候选数 |
+| `RERANK_URL` / `RERANK_MODEL` | 百炼原生 rerank 端点 / `gte-rerank-v2` | `qwen-rerank` 在部分账号返回 403，需按账号实测 |
+| `RERANK_API_KEY` | 空 | 留空时复用 `EMBEDDING_API_KEY`（两者共用同一个百炼 Key）|
+
+集合结构自 M2 起要求 `dense` + `sparse` 两个命名字段；M1 时期建的集合缺少 `sparse`
+时 `ensure_collection()` 会给出"删除集合并重建索引"的可执行错误，不会静默降级。只写
+稠密向量的旧代码路径在新集合上仍可正常工作。
 
 本地验证（无需模型 Key 的部分）：
 
@@ -129,6 +138,11 @@ uv run --project backend pytest backend/tests -q
 ```
 
 真实服务验证（需 `EMBEDDING_API_KEY` 与可达的 Qdrant）：执行合成样例的解析→切分→入库→检索链路，确认三个需求查询（数据库设计/缓存/Docker）的候选排序和跨用户隔离；已发布版本不可原地重建，更新资料需使用新版本；检索结果为 chunk 元数据，quote 与 locator 由后端查 MongoDB 补齐。当前 Qdrant 指向云端集群的配置为本地 `.env` 设置，不随仓库提交。
+
+M2 的三档检索与评测有独立的可复跑路径（不需要 MongoDB/Celery），命令与口径见
+[14 C 开发检索记录](14-C开发检索记录-rag-retrieval-log.md) 第 5 节；评测运行器与调参脚本
+分别是 `scripts/m2_rag_eval.py` 与 `scripts/m2_rag_tune.py`，规则（调参只用开发集、
+评测集只报告一次）见 [13](13-M2检索策略与评测-rag-m2-spec.md)。
 
 ### 独立 M1 端到端验收
 
