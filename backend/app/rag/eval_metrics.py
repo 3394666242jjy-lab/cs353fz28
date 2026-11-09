@@ -136,8 +136,14 @@ def summarize(results: Sequence[QueryResult], ks: Sequence[int] = KS) -> dict:
     }
 
 
-def render_markdown(summary: dict, *, strategy: str, config_version: str) -> str:
-    """把汇总渲染成可贴进报告的表；未判定的负例明确标注，不混进结论。"""
+def render_markdown(
+    summary: dict,
+    *,
+    strategy: str,
+    config_version: str,
+    latency_note: str | None = None,
+) -> str:
+    """把汇总渲染成可贴进报告的表；未判定的负例与耗时口径都明确标注，不混进结论。"""
     lines = [
         f"### 策略 `{strategy}`",
         "",
@@ -160,6 +166,11 @@ def render_markdown(summary: dict, *, strategy: str, config_version: str) -> str
         "",
         f"耗时（ms）：P50 {latency['p50']:.1f}，P95 {latency['p95']:.1f}，"
         f"平均 embedding {latency['mean_embedding']:.1f} / 检索 {latency['mean_search']:.1f}",
+    ]
+    if latency_note:
+        # 耗时口径必须写在数字旁边：离开运行环境谈延迟只会误导决策。
+        lines.append(f"（{latency_note}）")
+    lines += [
         "",
         "| 负例类别 | 数量 | 违规 | 违规率 |",
         "| --- | --- | --- | --- |",

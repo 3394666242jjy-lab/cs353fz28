@@ -312,6 +312,22 @@ def load_results(strategy: str, questions: list[dict]) -> list:
     return results
 
 
+def latency_note(settings) -> str | None:
+    """说明耗时是在什么环境测的。
+
+    生产部署的向量库是同机本地服务；本轮若跑在临时云端环境，延迟会被网络往返放大，
+    直接当成部署开销会误导决策，因此必须在报告里写清口径。
+    """
+    url = settings.vector_store_url
+    is_local = any(host in url for host in ("127.0.0.1", "localhost", "::1"))
+    if is_local:
+        return None
+    return (
+        f"耗时为云端 Qdrant（{settings.vector_store_collection} 所在集群）实测值，"
+        "含公网往返，不代表本地部署开销"
+    )
+
+
 def dump_labels() -> None:
     """打印问题与目标 chunk 原文的对照表，供人工复核标注。"""
     mods = backend()
@@ -403,7 +419,10 @@ def main() -> None:
                 result_path(strategy).read_text(encoding="utf-8").splitlines()[0]
             )["config_version"]
             report = mods.eval_metrics.render_markdown(
-                summary, strategy=strategy, config_version=config_version
+                summary,
+                strategy=strategy,
+                config_version=config_version,
+                latency_note=latency_note(settings),
             )
             (RESULTS_DIR / f"{strategy}.json").write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + "\n",

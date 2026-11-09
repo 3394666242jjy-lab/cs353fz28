@@ -123,3 +123,19 @@ def test_render_markdown_states_pending_instead_of_fake_rate():
 
     assert "dense/m@64/top5" in text
     assert "未判定" in text
+
+
+def test_render_markdown_carries_latency_environment_note():
+    """耗时口径要写在数字旁边：离开运行环境谈延迟会误导决策。"""
+    summary = summarize([answerable(["a"], ["a"])])
+
+    with_note = render_markdown(
+        summary,
+        strategy="dense",
+        config_version="dense/m@64/top5",
+        latency_note="耗时为云端实测值",
+    )
+    without_note = render_markdown(summary, strategy="dense", config_version="dense/m@64/top5")
+
+    assert "耗时为云端实测值" in with_note
+    assert "耗时为云端实测值" not in without_note
