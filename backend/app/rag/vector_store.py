@@ -8,7 +8,7 @@ version、chunk_id、index_version、deleted）。用户与版本过滤永远写
 运行形态切换只改配置（VECTOR_STORE_URL / VECTOR_STORE_API_KEY）：在线集群
 （Qdrant Cloud）填 HTTPS 地址与 API Key；本地开发用仓库 compose.yaml 的
 Qdrant 容器（http://127.0.0.1:6333，Key 留空即不发鉴权头）。两种形态的 REST
-行为一致，索引结构（具名 dense 向量 + payload 字段）与过滤语义完全相同，
+行为一致，索引结构（具名 dense + sparse 向量 + payload 字段）与过滤语义完全相同，
 索引数据可按文档重建，切换环境不影响已约定的字段。
 
 适配器直接调用 Qdrant REST API：不引 SDK，也与架构文档提到的未来 Milvus 选项
@@ -29,6 +29,11 @@ from app.schemas.common import ContractModel
 # 稠密向量在 Qdrant 集合中的命名字段；M2 引入稀疏向量时另起名字（如 sparse），
 # 数据库设计文档要求稠密与关键词稀疏表示使用不同命名字段。
 DENSE_VECTOR_NAME = "dense"
+
+# 关键词稀疏表示在集合中的命名字段（M2，issue #25）。稀疏权重由本模块按 BM25
+# 在客户端计算，Qdrant 只负责存储与稀疏点积，因此该字段不带任何模型配置。
+# 集合创建时即建立该字段：空集合时重建零成本，等索引灌入后再加字段必须重建。
+SPARSE_VECTOR_NAME = "sparse"
 
 # payload 索引清单：字段名 -> Qdrant 索引类型，来自数据库设计文档的最小集合。
 PAYLOAD_INDEXES = {
@@ -163,21 +168,24 @@ class QdrantVectorStore:
         return self._collection
 
     async def ensure_collection(self) -> None:
-        """确保集合与 payload 索引就绪。
+        """确保集合、两个命名字段与 payload 索引就绪。
 
-        集合已存在时跳过创建（并校验维度一致）；索引始终重新断言——建索引是幂等
-        操作，因此"集合建成但索引失败"的半完成状态会在重试时自动修复。
+        集合已存在时跳过创建（并校验既有结构一致）；索引始终重新断言——建索引是
+        幂等操作，因此"集合建成但索引失败"的半完成状态会在重试时自动修复。
         """
         response = await self._send("GET", f"/collections/{self._collection}")
         if response.status_code == 404:
-            body = {"vectors": {DENSE_VECTOR_NAME: {"size": self._dimension, "distance": "Cosine"}}}
+            body = {
+                "vectors": {DENSE_VECTOR_NAME: {"size": self._dimension, "distance": "Cosine"}},
+                "sparse_vectors": {SPARSE_VECTOR_NAME: {}},
+            }
             response = await self._send("PUT", f"/collections/{self._collection}", json_body=body)
             if response.status_code != 200:
                 raise self._status_error(response)
         elif response.status_code != 200:
             raise self._status_error(response)
         else:
-            self._verify_existing_dimension(response)
+            self._verify_existing_schema(response)
         for field_name, schema in PAYLOAD_INDEXES.items():
             index_body = {"field_name": field_name, "field_schema": schema}
             response = await self._send(
@@ -186,16 +194,24 @@ class QdrantVectorStore:
             if response.status_code != 200:
                 raise self._status_error(response)
 
-    def _verify_existing_dimension(self, response: httpx.Response) -> None:
-        """校验已存在集合的稠密向量维度与配置一致，不一致按迁移流程拒绝继续。"""
-        params = (
-            response.json().get("result", {}).get("config", {}).get("params", {}).get("vectors", {})
-        )
-        size = params.get(DENSE_VECTOR_NAME, {}).get("size")
+    def _verify_existing_schema(self, response: httpx.Response) -> None:
+        """校验已存在集合的结构与本适配器一致，不一致按迁移流程拒绝继续。
+
+        两项都要一致：稠密向量维度决定查询能否落地；稀疏字段是 M2 混合检索的落点，
+        缺失时稀疏查询只会得到 Qdrant 的 400，因此在这里提前给出可执行的迁移提示。
+        """
+        params = response.json().get("result", {}).get("config", {}).get("params", {})
+        size = params.get("vectors", {}).get(DENSE_VECTOR_NAME, {}).get("size")
         if size is not None and size != self._dimension:
             raise VectorStoreError(
                 f"集合 {self._collection} 现有 {size} 维向量，适配器配置为 {self._dimension} 维；"
                 "变更向量维度须按数据库设计文档的变更规则重建索引",
+                retryable=False,
+            )
+        if SPARSE_VECTOR_NAME not in (params.get("sparse_vectors") or {}):
+            raise VectorStoreError(
+                f"集合 {self._collection} 缺少 {SPARSE_VECTOR_NAME} 稀疏字段；"
+                "M2 混合检索要求稠密与稀疏两个命名字段并存，请删除集合并重建索引",
                 retryable=False,
             )
 

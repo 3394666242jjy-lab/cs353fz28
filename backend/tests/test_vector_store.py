@@ -59,16 +59,15 @@ def point(**overrides) -> ChunkPoint:
     return ChunkPoint(**values)
 
 
-def collection_config(size: int = DIMENSION) -> httpx.Response:
-    """构造"集合已存在"的 GET 响应，size 可模拟不同维度的历史集合。"""
-    return httpx.Response(
-        200,
-        json={
-            "result": {
-                "config": {"params": {"vectors": {"dense": {"size": size, "distance": "Cosine"}}}}
-            }
-        },
-    )
+def collection_config(size: int = DIMENSION, *, sparse: bool = True) -> httpx.Response:
+    """构造"集合已存在"的 GET 响应。
+
+    size 模拟不同维度的历史集合；sparse=False 模拟 M1 时期只建了稠密字段的集合。
+    """
+    params: dict = {"vectors": {"dense": {"size": size, "distance": "Cosine"}}}
+    if sparse:
+        params["sparse_vectors"] = {"sparse": {}}
+    return httpx.Response(200, json={"result": {"config": {"params": params}}})
 
 
 def ok() -> httpx.Response:
@@ -77,7 +76,7 @@ def ok() -> httpx.Response:
 
 
 def test_ensure_collection_creates_named_vectors_and_payload_indexes():
-    """集合不存在时：创建具名稠密向量集合，并建立 03 文档要求的全部 payload 索引。"""
+    """集合不存在时：创建 dense+sparse 命名字段，并建立 03 文档要求的全部 payload 索引。"""
     seen: list[tuple[str, str, dict]] = []
     requests: list[httpx.Request] = []
 
@@ -96,7 +95,10 @@ def test_ensure_collection_creates_named_vectors_and_payload_indexes():
     assert (
         "PUT",
         "/collections/careerpilot_chunks",
-        {"vectors": {"dense": {"size": 64, "distance": "Cosine"}}},
+        {
+            "vectors": {"dense": {"size": 64, "distance": "Cosine"}},
+            "sparse_vectors": {"sparse": {}},
+        },
     ) in puts
     indexed = {
         body["field_name"]: body["field_schema"]
@@ -142,6 +144,20 @@ def test_ensure_collection_rejects_embedding_dimension_drift():
     with pytest.raises(VectorStoreError) as excinfo:
         asyncio.run(store(handler).ensure_collection())
 
+    assert "重建索引" in str(excinfo.value)
+    assert excinfo.value.retryable is False
+
+
+def test_ensure_collection_rejects_collection_without_sparse_field():
+    """M1 时期只建了稠密字段的集合：直接给出可执行的迁移提示，而不是等稀疏查询 400。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return collection_config(sparse=False)
+
+    with pytest.raises(VectorStoreError) as excinfo:
+        asyncio.run(store(handler).ensure_collection())
+
+    assert "sparse" in str(excinfo.value)
     assert "重建索引" in str(excinfo.value)
     assert excinfo.value.retryable is False
 
