@@ -305,6 +305,53 @@ def test_fuse_hits_rejects_degenerate_weights():
         fuse_hits([], [], sparse_weight=1.0)
 
 
+class StubRerank:
+    """测试用重排 provider：按构造好的顺序与分数返回，接口与真实适配器一致。"""
+
+    model_version = "gte-rerank-v2"
+
+    def __init__(self, order: list[tuple[str, float]], documents: list[str] | None = None):
+        self._order = order
+        self._documents = documents
+        self.calls: list[dict] = []
+
+    async def rerank(self, *, query: str, documents: list[str], top_n: int | None = None):
+        self.calls.append({"query": query, "documents": list(documents), "top_n": top_n})
+        if self._documents is not None:
+            assert documents == self._documents
+        index_of = {text: index for index, text in enumerate(documents)}
+        return [(index_of[text], score) for text, score in self._order if text in index_of]
+
+
+def hybrid_adapter(*, dense, sparse, texts, order):
+    """构造一个 hybrid_rerank 适配器：两路检索与原文解析都用桩实现。"""
+    config = settings(retrieval_strategy="hybrid_rerank", hybrid_candidates_per_channel=10)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == EMBEDDING_URL:
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [0.01] * DIMENSION}]}
+            )
+        body = json.loads(request.content)
+        if body["vector"]["name"] == "sparse":
+            return httpx.Response(200, json={"result": sparse})
+        return httpx.Response(200, json={"result": dense})
+
+    transport = httpx.MockTransport(handler)
+
+    async def resolver(chunk_ids: list[str]) -> dict[str, str]:
+        return {chunk_id: texts[chunk_id] for chunk_id in chunk_ids if chunk_id in texts}
+
+    return QdrantEvidenceSource(
+        config,
+        embedder=HttpEmbeddingProvider(config, transport=transport),
+        store=QdrantVectorStore(config, transport=transport),
+        sparse_encoder=Bm25Encoder(idf={"缓存": 1.0}, avg_doc_len=2.0),
+        rerank_provider=StubRerank(order),
+        text_resolver=resolver,
+    )
+
+
 def test_hybrid_strategy_queries_both_channels_and_reports_weight():
     """混合策略：两路各取候选后融合，配置版本号带上通道权重。"""
     encoder = Bm25Encoder(idf={"缓存": 1.5, "命中": 1.5}, avg_doc_len=4.0)
@@ -382,9 +429,65 @@ def test_hybrid_without_encoder_fails_instead_of_falling_back_to_dense():
         asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存"))
 
 
-def test_hybrid_rerank_strategy_fails_loudly_until_implemented():
-    """未实现的档位必须报错，不能返回未重排结果冒充已重排。"""
+def test_hybrid_rerank_requires_a_text_resolver():
+    """重排需要候选原文；未注入解析器时必须报错，不能静默跳过重排。"""
     adapter, _ = source([hit("chunk_a", 0.5)], retrieval_strategy="hybrid_rerank")
 
-    with pytest.raises(RuntimeError, match="尚未实现"):
-        asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存"))
+    with pytest.raises(RuntimeError, match="原文解析器"):
+        asyncio.run(
+            QdrantEvidenceSource(
+                adapter._settings,
+                embedder=adapter._embedder,
+                store=adapter._store,
+                sparse_encoder=Bm25Encoder(idf={"缓存": 1.0}, avg_doc_len=2.0),
+                rerank_provider=StubRerank(order=[]),
+                text_resolver=None,
+            ).retrieve_evidence(user_id="user_c", query="缓存")
+        )
+
+
+def test_hybrid_rerank_reorders_candidates_by_provider_scores():
+    """重排按 provider 给出的分数排序，配置版本号带上 rerank 模型名。"""
+    adapter = hybrid_adapter(
+        dense=[hit("chunk_a", 0.9), hit("chunk_b", 0.5)],
+        sparse=[hit("chunk_a", 3.0)],
+        texts={"chunk_a": "缓存命中率 60%", "chunk_b": "缓存命中率 92%"},
+        # 让 provider 把原始排第二的候选（92% 那段）排到第一。
+        order=[("缓存命中率 92%", 0.95), ("缓存命中率 60%", 0.10)],
+    )
+
+    result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))
+
+    assert [item.chunk_id for item in result.evidence] == ["chunk_b", "chunk_a"]
+    assert result.evidence[0].retrieval_score == pytest.approx(0.95)
+    assert result.retrieval_config_version == (
+        "hybrid_rerank/gte-rerank-v2/w0.50/text-embedding-v4@64/top5"
+    )
+
+
+def test_hybrid_rerank_excludes_candidates_without_resolved_text():
+    """缺原文的候选不能打分：排除并给出告警，而不是假装它排在后面。"""
+    adapter = hybrid_adapter(
+        dense=[hit("chunk_a", 0.9), hit("chunk_b", 0.5)],
+        sparse=[hit("chunk_a", 3.0)],
+        texts={"chunk_b": "缓存命中率 92%"},
+        order=[("缓存命中率 92%", 0.9)],
+    )
+
+    result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))
+
+    assert [item.chunk_id for item in result.evidence] == ["chunk_b"]
+    assert any("缺少原文" in warning for warning in result.warnings)
+
+
+def test_hybrid_rerank_fails_when_no_candidate_has_text():
+    """整批候选都缺原文时重排无法进行，必须报错而不是返回未重排结果。"""
+    adapter = hybrid_adapter(
+        dense=[hit("chunk_a", 0.9)],
+        sparse=[hit("chunk_a", 3.0)],
+        texts={},
+        order=[],
+    )
+
+    with pytest.raises(RuntimeError, match="无法重排"):
+        asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))

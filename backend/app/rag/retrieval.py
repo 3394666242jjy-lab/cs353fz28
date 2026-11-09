@@ -18,11 +18,13 @@
   由 B 接上 chunk 查询后组装，D 的 Agent 最终拿到的仍是完整证据记录。
 """
 
+from collections.abc import Awaitable, Callable
 from typing import Literal, Protocol
 
 from app.config import Settings, get_settings
 from app.rag.bm25 import Bm25Encoder
 from app.rag.embeddings import EmbeddingProvider, get_embedding_provider
+from app.rag.rerank import RerankProvider, get_rerank_provider
 from app.rag.vector_store import SearchHit, VectorStore, get_vector_store
 from app.schemas.analysis import DocumentVersion
 from app.schemas.common import ContractModel
@@ -101,6 +103,11 @@ class EvidenceCandidateSource(Protocol):
         ...
 
 
+# 候选原文解析器：给定 chunk_id 返回原文。原文权威副本在 MongoDB（成员 B 的数据域），
+# 因此由调用方注入而不是 C 自己查库——C 只持有 chunk_id，重排却需要文本。
+TextResolver = Callable[[list[str]], Awaitable[dict[str, str]]]
+
+
 def _normalise(scores: dict[str, float]) -> dict[str, float]:
     """把一路通道的分数 min-max 归一到 [0, 1]。
 
@@ -158,12 +165,18 @@ class QdrantEvidenceSource:
         embedder: EmbeddingProvider | None = None,
         store: VectorStore | None = None,
         sparse_encoder: Bm25Encoder | None = None,
+        rerank_provider: RerankProvider | None = None,
+        text_resolver: TextResolver | None = None,
     ) -> None:
         # 依赖均可注入：测试可传 MockTransport 适配器，生产默认从全局配置构建。
         self._settings = settings
         self._embedder = embedder or get_embedding_provider(settings)
         self._store = store or get_vector_store(settings)
         self._sparse_encoder = sparse_encoder
+        self._rerank = (
+            rerank_provider if rerank_provider is not None else get_rerank_provider(settings)
+        )
+        self._text_resolver = text_resolver
 
     async def retrieve_evidence(
         self,
@@ -183,6 +196,7 @@ class QdrantEvidenceSource:
         top_k = top_k if top_k is not None else self._settings.retrieval_top_k
         strategy = self._settings.retrieval_strategy
         (query_vector,) = await self._embedder.embed_texts([query])
+        warnings: list[str] = []
 
         if strategy == "dense":
             hits = await self._store.search(
@@ -205,6 +219,14 @@ class QdrantEvidenceSource:
                 document_versions=document_versions,
                 top_k=top_k,
             )
+        elif strategy == "hybrid_rerank":
+            hits, config_version, warnings = await self._hybrid_rerank_hits(
+                user_id=user_id,
+                query=query,
+                query_vector=query_vector,
+                document_versions=document_versions,
+                top_k=top_k,
+            )
         else:
             raise RuntimeError(
                 f"检索策略 {strategy} 尚未实现（Rerank 适配器属 S4）；"
@@ -221,7 +243,6 @@ class QdrantEvidenceSource:
             )
             for hit in hits[:top_k]
         ]
-        warnings = []
         if not evidence:
             warnings.append("在请求的用户与文档版本范围内，没有匹配该查询的个人证据")
         return EvidenceQueryResult(
@@ -268,6 +289,67 @@ class QdrantEvidenceSource:
         )
         return fuse_hits(dense_hits, sparse_hits, sparse_weight=sparse_weight), config_version
 
+    async def _hybrid_rerank_hits(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        query_vector: list[float],
+        document_versions: list[DocumentVersion] | None,
+        top_k: int,
+    ) -> tuple[list[SearchHit], str, list[str]]:
+        """在 hybrid 候选上做重排。
+
+        重排需要候选原文，而原文在 MongoDB：拿不到解析器或某个候选缺原文时，都不允许
+        悄悄跳过——跳过会让"未重排"的结果被当成"已重排"交付。缺原文的候选被排除并
+        记录告警；整批都缺则报错。
+        """
+        if self._rerank is None:
+            raise RuntimeError(
+                "hybrid_rerank 需要 Rerank provider（RERANK_MODEL / 密钥）；"
+                "未配置时不得静默降级为未重排结果"
+            )
+        if self._text_resolver is None:
+            raise RuntimeError(
+                "hybrid_rerank 需要候选原文解析器（chunk 原文权威副本在 MongoDB，"
+                "由调用方注入）；未提供时无法重排"
+            )
+        fused, _ = await self._hybrid_hits(
+            user_id=user_id,
+            query=query,
+            query_vector=query_vector,
+            document_versions=document_versions,
+            top_k=top_k,
+        )
+        candidates = fused[: max(top_k, self._settings.hybrid_candidates_per_channel)]
+        texts = await self._text_resolver([hit.chunk_id for hit in candidates])
+        scored_pool = [hit for hit in candidates if texts.get(hit.chunk_id)]
+        warnings: list[str] = []
+        missing = len(candidates) - len(scored_pool)
+        if missing:
+            warnings.append(f"{missing} 个候选缺少原文，未参与重排并被排除")
+        if not scored_pool:
+            raise RuntimeError("候选全部缺少原文，无法重排；请检查候选原文解析器")
+
+        # rerank 按输入顺序给出 (下标, 分数)，这里按分数降序取前 top_k。
+        scored = await self._rerank.rerank(
+            query=query,
+            documents=[texts[hit.chunk_id] for hit in scored_pool],
+            top_n=top_k,
+        )
+        reranked = [
+            scored_pool[index].model_copy(update={"score": score}) for index, score in scored
+        ]
+        config_version = build_retrieval_config_version(
+            strategy="hybrid_rerank",
+            model_version=self._embedder.model_version,
+            dimension=self._embedder.dimension,
+            top_k=top_k,
+            sparse_weight=self._settings.hybrid_sparse_weight,
+            rerank_model=self._rerank.model_version,
+        )
+        return reranked, config_version, warnings
+
 
 def get_evidence_source(
     settings: Settings | None = None,
@@ -275,9 +357,16 @@ def get_evidence_source(
     embedder: EmbeddingProvider | None = None,
     store: VectorStore | None = None,
     sparse_encoder: Bm25Encoder | None = None,
+    rerank_provider: RerankProvider | None = None,
+    text_resolver: TextResolver | None = None,
 ) -> EvidenceCandidateSource:
     """工厂：默认从全局配置构建候选源；可显式注入配置与依赖供测试使用。"""
     settings = settings or get_settings()
     return QdrantEvidenceSource(
-        settings, embedder=embedder, store=store, sparse_encoder=sparse_encoder
+        settings,
+        embedder=embedder,
+        store=store,
+        sparse_encoder=sparse_encoder,
+        rerank_provider=rerank_provider,
+        text_resolver=text_resolver,
     )
