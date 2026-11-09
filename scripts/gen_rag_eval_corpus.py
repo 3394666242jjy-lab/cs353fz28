@@ -54,6 +54,9 @@ def rag_modules():
 # 与冻结基线一致：生成标注时用同一参数切分，否则 chunk_id 会与索引结果不一致。
 CHUNK_MAX_CHARS = 500
 
+# 依赖物理清理链路、暂时无法判定的负例类别；它们不参与调参。
+PENDING_KINDS = ("deleted",)
+
 DATA_DIR = ROOT / "backend" / "tests" / "data" / "rag_eval"
 CORPUS_DIR = DATA_DIR / "corpus"
 QUESTIONS_PATH = DATA_DIR / "questions.jsonl"
@@ -665,6 +668,8 @@ def build_questions() -> list[dict]:
                     "query": fact.query,
                     "kind": "answerable",
                     "style": fact.style,
+                    # 每用户取 1/4/7/10 进开发集，其余进评测集：调参只看开发集。
+                    "split": "dev" if i % 3 == 1 else "eval",
                     "relevant_chunk_ids": [
                         resolve_chunk_id(short, fact.doc, fact.version, fact.marker, corpus)
                     ],
@@ -673,7 +678,9 @@ def build_questions() -> list[dict]:
                 }
             )
 
+        kind_seen: dict[str, int] = {}
         for i, neg in enumerate(negatives_for(short, user, extra, other, EXTRA[other]), start=1):
+            kind_seen[neg.kind] = kind_seen.get(neg.kind, 0) + 1
             forbidden: list[str] = []
             if neg.forbidden_doc and neg.forbid_all:
                 owner = neg.forbidden_user or short
@@ -704,6 +711,9 @@ def build_questions() -> list[dict]:
                     "query": neg.query,
                     "kind": neg.kind,
                     "style": "negative",
+                    # 每类负例的第一条进开发集，其余进评测集；删除类只能落评测集
+                    # （每用户只有一条，且它本身还没法判定，不适合用来调参）。
+                    "split": "dev" if _negative_split(neg.kind, kind_seen[neg.kind]) else "eval",
                     "expect": neg.expect,
                     "relevant_chunk_ids": [],
                     "forbidden_chunk_ids": forbidden,
@@ -712,6 +722,13 @@ def build_questions() -> list[dict]:
                 }
             )
     return questions
+
+
+def _negative_split(kind: str, occurrence: int) -> bool:
+    """返回该负例是否属于开发集：删除类一律进评测集，其余取每类第一条。"""
+    if kind in PENDING_KINDS:
+        return False
+    return occurrence == 1
 
 
 def write_outputs() -> None:
@@ -776,6 +793,21 @@ def check() -> None:
     }, kinds
     for q in answerable:
         assert len(q["relevant_chunk_ids"]) == 1, q["id"]
+
+    # 开发集/评测集切分必须两边都有可回答问题与负例，否则调参或报告会失去意义。
+    for split in ("dev", "eval"):
+        group = [q for q in questions if q["split"] == split]
+        assert any(q["kind"] == "answerable" for q in group), f"{split} 缺少可回答问题"
+        assert any(q["kind"] != "answerable" for q in group), f"{split} 缺少负例"
+    dev_ids = {q["id"] for q in questions if q["split"] == "dev"}
+    eval_ids = {q["id"] for q in questions if q["split"] == "eval"}
+    assert not dev_ids & eval_ids, "开发集与评测集不得重叠"
+    assert len(dev_ids) == 21, len(dev_ids)
+    assert len(eval_ids) == 39, len(eval_ids)
+    # 删除类负例只落评测集：它本身还没法判定，不该用来调参。
+    for q in questions:
+        if q["kind"] == "deleted":
+            assert q["split"] == "eval", q["id"]
 
     # 事实必须分散在多个 chunk 上：若多个问题指向同一个 chunk，Recall@k 会虚高，
     # 三档策略的差异也就无从体现。这里要求每个用户至少 9 个互不相同的目标 chunk。

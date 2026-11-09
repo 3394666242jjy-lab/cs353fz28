@@ -256,9 +256,9 @@ async def index_corpus(settings, manifest: dict, sparse_encoder=None) -> int:
     return indexed
 
 
-def result_path(strategy: str) -> Path:
-    """结果文件按策略区分，便于同一进程内多次运行互不覆盖。"""
-    return RESULTS_DIR / f"{strategy}.jsonl"
+def result_path(strategy: str, suffix: str = "") -> Path:
+    """结果文件按策略 + 切分区分：开发集与评测集的结果绝不能混进同一个文件。"""
+    return RESULTS_DIR / f"{strategy}{suffix}.jsonl"
 
 
 def question_to_payload(question: dict) -> dict:
@@ -295,10 +295,11 @@ async def evaluate(
     top_k: int | None,
     sparse_encoder=None,
     chunk_texts: dict[str, str] | None = None,
+    suffix: str = "",
 ) -> list:
     """逐条检索并把结果增量写入 JSONL；中断后可用 --resume 续跑。"""
     mods = backend()
-    path = result_path(strategy)
+    path = result_path(strategy, suffix)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     done: set[str] = set()
@@ -363,15 +364,15 @@ async def evaluate(
 
     if len(config_versions) > 1:
         raise SystemExit(f"同一策略出现多个配置版本，结果不可比：{sorted(config_versions)}")
-    return load_results(strategy, questions)
+    return load_results(strategy, questions, suffix)
 
 
-def load_results(strategy: str, questions: list[dict]) -> list:
+def load_results(strategy: str, questions: list[dict], suffix: str = "") -> list:
     """把增量结果读回成指标模块的 QueryResult 列表。"""
     mods = backend()
     by_id = {question["id"]: question for question in questions}
     results = []
-    for line in result_path(strategy).read_text(encoding="utf-8").splitlines():
+    for line in result_path(strategy, suffix).read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         row = json.loads(line)
@@ -456,6 +457,12 @@ def main() -> None:
         help="要评测的策略；hybrid / hybrid_rerank 待 S3/S4 实现",
     )
     parser.add_argument("--resume", action="store_true", help="跳过已完成的题目续跑")
+    parser.add_argument(
+        "--split",
+        choices=("dev", "eval"),
+        default="eval",
+        help="用哪个切分评测：调参只能用 dev，最终报告只能用 eval",
+    )
     parser.add_argument("--top-k", type=int, default=None, help="覆盖 retrieval_top_k")
     parser.add_argument("--no-proxy", action="store_true", help="绕过系统代理直连外部服务")
     parser.add_argument("--dump-labels", action="store_true", help="打印标注对照表后退出")
@@ -484,7 +491,12 @@ def main() -> None:
             print(f"索引完成：{indexed} 个文档版本")
         if args.index_only:
             return
-        questions = load_questions()
+        all_questions = load_questions()
+        questions = [q for q in all_questions if q["split"] == args.split]
+        if not questions:
+            raise SystemExit(f"切分 {args.split} 下没有问题")
+        print(f"切分 {args.split}：{len(questions)} 条问题（共 {len(all_questions)} 条）")
+        suffix = f".{args.split}"
         for strategy in args.strategies:
             print(f"\n开始评测策略 {strategy}（{len(questions)} 条问题）")
             strategy_settings = settings.model_copy(update={"retrieval_strategy": strategy})
@@ -496,11 +508,12 @@ def main() -> None:
                 top_k=args.top_k,
                 sparse_encoder=encoder,
                 chunk_texts=chunk_texts,
+                suffix=suffix,
             )
             mods = backend()
             summary = mods.eval_metrics.summarize(results)
             config_version = json.loads(
-                result_path(strategy).read_text(encoding="utf-8").splitlines()[0]
+                result_path(strategy, suffix).read_text(encoding="utf-8").splitlines()[0]
             )["config_version"]
             report = mods.eval_metrics.render_markdown(
                 summary,
@@ -508,12 +521,12 @@ def main() -> None:
                 config_version=config_version,
                 latency_note=latency_note(settings),
             )
-            (RESULTS_DIR / f"{strategy}.json").write_text(
+            (RESULTS_DIR / f"{strategy}{suffix}.json").write_text(
                 json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
                 newline="\n",
             )
-            (RESULTS_DIR / f"{strategy}.md").write_text(
+            (RESULTS_DIR / f"{strategy}{suffix}.md").write_text(
                 report + "\n", encoding="utf-8", newline="\n"
             )
             print("\n" + report)
