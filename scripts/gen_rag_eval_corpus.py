@@ -23,6 +23,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from dataclasses import dataclass
@@ -122,6 +123,10 @@ class Negative:
     forbidden_marker: str | None = None
     forbidden_doc: str | None = None
     forbidden_version: int = 1
+    # 跨用户负例的禁用 chunk 属于另一个用户，需按那个用户的语料解析。
+    forbidden_user: str | None = None
+    # 删除负例禁用的是整份文档的全部 chunk，而不是某一个。
+    forbid_all: bool = False
 
 
 def resume_text(short: str, user: dict, extra: dict) -> str:
@@ -541,22 +546,36 @@ def negatives_for(short: str, user: dict, extra: dict, other: str, other_extra: 
         ),
         Negative("no_evidence", "候选人写过 Go 语言服务吗？", "语料中不存在 Go 相关内容。"),
         Negative("no_evidence", "候选人发表过论文吗？", "语料中没有任何论文或发表记录。"),
-        # 跨用户：问的是别人的事实，发起人是自己
+        # 跨用户：问的是别人的事实，发起人是自己。判据是"他人 chunk 不得出现"，
+        # 而不是"结果为空"——属主过滤生效后仍会返回自己的无关 chunk，那是正确答案。
         Negative(
             "cross_user",
             f"{other_extra['cert_name']} 是哪年拿的？",
-            f"该认证属于 {other} 用户，{short} 检索时必须为空。",
+            f"该认证属于 {other} 用户；{short} 的检索不得返回他人的 chunk。",
+            expect="forbidden_absent",
+            forbidden_marker=other_extra["cert_name"],
+            forbidden_doc="cert",
+            forbidden_user=other,
         ),
         Negative(
             "cross_user",
             f"{other_extra['stack_version']} 在项目里怎么用的？",
-            f"该版本号属于 {other} 用户，{short} 检索时必须为空。",
+            f"该版本号属于 {other} 用户；{short} 的检索不得返回他人的 chunk。",
+            expect="forbidden_absent",
+            forbidden_marker=other_extra["stack_version"],
+            forbidden_doc="resume",
+            forbidden_user=other,
         ),
-        # 已删除：B 侧软删除后应检索不到（待 S1b 接入 delete_document_points 后判定）
+        # 已删除：purge 后该文档的向量应全部不可检索。判据同样是"禁用 chunk 不得出现"
+        # 而不是"结果为空"——库里还有该用户的其它文档，检索返回它们是正确答案。
         Negative(
             "deleted",
             "项目 B 把检索延迟降到了多少？",
-            "该文档在评测中被标记删除；purge 后向量应不可检索。",
+            "该文档在评测中被标记删除；物理清理后其全部 chunk 都不得被召回。",
+            expect="forbidden_absent",
+            forbidden_doc="project_b",
+            forbidden_version=1,
+            forbid_all=True,
         ),
     ]
 
@@ -611,15 +630,31 @@ def resolve_chunk_id(
     return make_chunk_id(document_id(short, doc_key), version, hits[0])
 
 
+def all_chunk_ids(
+    short: str, doc_key: str, version: int, corpus: dict[str, dict[int, bytes]]
+) -> list[str]:
+    """返回某文档某个版本的全部 chunk_id，用于"整份文档不得出现"的负例。"""
+    _, file_type = DOC_META[doc_key]
+    texts = chunk_map(corpus[doc_key][version], file_type)
+    _, _, make_chunk_id = rag_modules()
+    return [
+        make_chunk_id(document_id(short, doc_key), version, ordinal)
+        for ordinal in range(len(texts))
+    ]
+
+
 def build_questions() -> list[dict]:
     """组装 60 个问题，标注全部指向真实 chunk_id。"""
     questions: list[dict] = []
     shorts = list(USERS)
+    corpora = {name: build_corpus(name, USERS[name], EXTRA[name]) for name in shorts}
     for index, short in enumerate(shorts):
         user = USERS[short]
         extra = EXTRA[short]
-        corpus = build_corpus(short, user, extra)
+        corpus = corpora[short]
         other = shorts[(index + 1) % len(shorts)]
+        # 与 B 的真实行为一致：传入该用户全部文档的钉住版本，而不是只传目标文档。
+        # 只传目标文档会把候选池缩到 2-3 个 chunk，Recall@k 直接饱和、失去区分力。
         versions = [{"document_id": doc_id, "version": v} for doc_id, v in current_versions(short)]
 
         for i, fact in enumerate(facts_for(short, extra), start=1):
@@ -633,26 +668,33 @@ def build_questions() -> list[dict]:
                     "relevant_chunk_ids": [
                         resolve_chunk_id(short, fact.doc, fact.version, fact.marker, corpus)
                     ],
-                    "document_versions": [
-                        {
-                            "document_id": document_id(short, fact.doc),
-                            "version": fact.version,
-                        }
-                    ],
+                    "document_versions": versions,
                     "note": f"标注依据：{fact.marker} 出现在 {fact.doc} v{fact.version}",
                 }
             )
 
         for i, neg in enumerate(negatives_for(short, user, extra, other, EXTRA[other]), start=1):
             forbidden: list[str] = []
-            if neg.forbidden_marker and neg.forbidden_doc:
+            if neg.forbidden_doc and neg.forbid_all:
+                owner = neg.forbidden_user or short
+                forbidden.extend(
+                    all_chunk_ids(
+                        owner,
+                        neg.forbidden_doc,
+                        neg.forbidden_version,
+                        corpora[owner],
+                    )
+                )
+            elif neg.forbidden_marker and neg.forbidden_doc:
+                # 跨用户负例的禁用 chunk 在对方语料里，按对方的 short 解析。
+                owner = neg.forbidden_user or short
                 forbidden.append(
                     resolve_chunk_id(
-                        short,
+                        owner,
                         neg.forbidden_doc,
                         neg.forbidden_version,
                         neg.forbidden_marker,
-                        corpus,
+                        corpora[owner],
                     )
                 )
             questions.append(
@@ -673,22 +715,43 @@ def build_questions() -> list[dict]:
 
 
 def write_outputs() -> None:
-    """写出语料与问题集；已存在的文件按同一内容覆盖，保证可复现。"""
+    """写出语料、问题集与清单；已存在的文件按同一内容覆盖，保证可复现。"""
     CORPUS_DIR.mkdir(parents=True, exist_ok=True)
+    documents: list[dict] = []
     for short, user in USERS.items():
         corpus = build_corpus(short, user, EXTRA[short])
         for doc_key, by_version in corpus.items():
-            filename, _ = DOC_META[doc_key]
-            # 多版本文档落盘为 <name>.v<N>.<ext> 便于人工检查；v1 另存一份不带后缀的。
+            filename, file_type = DOC_META[doc_key]
+            # 多版本文档落盘为 <name>.v<N>.<ext> 便于人工检查。
             for version, raw in by_version.items():
                 stem, dot, ext = filename.rpartition(".")
                 suffix = f".v{version}" if len(by_version) > 1 else ""
-                (CORPUS_DIR / f"{short}_{stem}{suffix}{dot}{ext}").write_bytes(raw)
+                name = f"{short}_{stem}{suffix}{dot}{ext}"
+                (CORPUS_DIR / name).write_bytes(raw)
+                documents.append(
+                    {
+                        "document_id": document_id(short, doc_key),
+                        "user_id": user["user_id"],
+                        "version": version,
+                        "path": name,
+                        "file_type": file_type,
+                    }
+                )
 
     questions = build_questions()
     # 固定 LF：仓库以 LF 为准，Windows 默认写 CRLF 会让每次重新生成都产生差异。
-    QUESTIONS_PATH.write_text(
-        "\n".join(json.dumps(q, ensure_ascii=False) for q in questions) + "\n",
+    questions_text = "\n".join(json.dumps(q, ensure_ascii=False) for q in questions) + "\n"
+    QUESTIONS_PATH.write_text(questions_text, encoding="utf-8", newline="\n")
+
+    # 清单让评测运行器不必了解生成器的内部结构；同时固定切分参数与问题集指纹，
+    # 这样"标注是按哪一版语料与切分产出的"可被运行器直接校验。
+    manifest = {
+        "chunk_max_chars": CHUNK_MAX_CHARS,
+        "questions_sha256": hashlib.sha256(questions_text.encode("utf-8")).hexdigest(),
+        "documents": documents,
+    }
+    (DATA_DIR / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
         newline="\n",
     )
@@ -723,9 +786,12 @@ def check() -> None:
         assert len(targets) >= 9, f"{short} 只有 {len(targets)} 个不同的目标 chunk"
     for q in negatives:
         if q["expect"] == "forbidden_absent":
-            assert len(q["forbidden_chunk_ids"]) == 1, q["id"]
+            # 旧版本/跨用户负例禁用单个 chunk；删除负例禁用整份文档的全部 chunk。
+            assert q["forbidden_chunk_ids"], q["id"]
         else:
             assert q["forbidden_chunk_ids"] == [], q["id"]
+    deleted_forbidden = [len(q["forbidden_chunk_ids"]) for q in negatives if q["kind"] == "deleted"]
+    assert deleted_forbidden and min(deleted_forbidden) >= 2, deleted_forbidden
 
     for short, user in USERS.items():
         corpus = build_corpus(short, user, EXTRA[short])
