@@ -1,0 +1,42 @@
+{
+  "answerable": {
+    "count": 36,
+    "recall_at_1": 0.8333333333333334,
+    "citation_precision_at_1": 0.8333333333333334,
+    "recall_at_3": 1.0,
+    "citation_precision_at_3": 0.3333333333333333,
+    "recall_at_5": 1.0,
+    "citation_precision_at_5": 0.2,
+    "mrr": 0.9027777777777778
+  },
+  "negatives": {
+    "no_evidence": {
+      "count": 9,
+      "violations": 9,
+      "rate": 1.0
+    },
+    "cross_user": {
+      "count": 6,
+      "violations": 0,
+      "rate": 0.0
+    },
+    "old_version": {
+      "count": 6,
+      "violations": 0,
+      "rate": 0.0
+    },
+    "deleted": {
+      "count": 3,
+      "violations": 3,
+      "rate": 1.0,
+      "pending": true
+    }
+  },
+  "latency_ms": {
+    "count": 60,
+    "p50": 6992.2058999945875,
+    "p95": 21889.890100006596,
+    "mean_embedding": 683.9918016676771,
+    "mean_search": 4660.48671000123
+  }
+}

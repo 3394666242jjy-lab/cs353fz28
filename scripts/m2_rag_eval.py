@@ -44,6 +44,9 @@ RESULTS_DIR = DATA_DIR / "results"
 # 评测用独立集合：语料会被反复重建，绝不能污染开发集合。
 EVAL_COLLECTION = "careerpilot_eval"
 
+# 可评测的三档策略；与 config 的 retrieval_strategy 取值一致。
+STRATEGIES = ("dense", "hybrid", "hybrid_rerank")
+
 _BACKEND = None
 
 
@@ -163,14 +166,14 @@ async def drop_collection(settings) -> int:
     return response.status_code
 
 
-def corpus_chunk_texts(manifest: dict, settings) -> list[str]:
-    """按运行期切分参数还原语料的所有 chunk 原文。
+def corpus_chunk_map(manifest: dict, settings) -> dict[str, str]:
+    """还原语料所有 chunk 的 chunk_id -> 原文。
 
-    用于统计 BM25 的 idf，也用于打印标注对照表；两条路径必须与索引时的切分完全
-    一致，否则 idf 与稀疏向量就对不上。
+    用途有三：统计 BM25 的 idf、重排时提供候选原文、打印标注对照表。三者必须与索引
+    时的切分完全一致，否则 idf、重排输入与标注就对不上，所以共用这一份实现。
     """
     mods = backend()
-    texts: list[str] = []
+    chunks: dict[str, str] = {}
     for document in manifest["documents"]:
         raw = (CORPUS_DIR / document["path"]).read_bytes()
         parsed = mods.parse_document(raw, file_type=document["file_type"])
@@ -181,18 +184,23 @@ def corpus_chunk_texts(manifest: dict, settings) -> list[str]:
                 mods.chunk_document(page, max_chars=settings.chunk_max_chars)
                 for page in parsed.pages
             ]
-        texts.extend(chunk.text for part in parts for chunk in part)
-    return texts
+        ordinal = 0
+        for part in parts:
+            for chunk in part:
+                chunk_id = mods.make_chunk_id(document["document_id"], document["version"], ordinal)
+                chunks[chunk_id] = chunk.text
+                ordinal += 1
+    return chunks
 
 
-def build_sparse_encoder(manifest: dict, settings):
+def build_sparse_encoder(manifest: dict, settings, chunk_texts: dict[str, str]):
     """按评测语料统计 idf，并把统计结果留档以便复现。
 
     IDF 决定稀疏通道的语义，因此它和结果一起落盘：换一份语料统计出的 idf 会得到
     不同的混合检索行为，不能把两次结果当成同一配置的比较。
     """
     mods = backend()
-    texts = corpus_chunk_texts(manifest, settings)
+    texts = list(chunk_texts.values())
     encoder = mods.Bm25Encoder.fit(texts)
     payload = {
         "corpus_questions_sha256": manifest["questions_sha256"],
@@ -286,6 +294,7 @@ async def evaluate(
     resume: bool,
     top_k: int | None,
     sparse_encoder=None,
+    chunk_texts: dict[str, str] | None = None,
 ) -> list:
     """逐条检索并把结果增量写入 JSONL；中断后可用 --resume 续跑。"""
     mods = backend()
@@ -304,8 +313,19 @@ async def evaluate(
 
     embedder = TimedEmbedder(mods.get_embedding_provider(settings))
     store = TimedStore(mods.get_vector_store(settings))
+
+    async def resolver(chunk_ids: list[str]) -> dict[str, str]:
+        """评测用原文解析器：直接从本地语料取 chunk 原文，替代生产的 MongoDB 查询。"""
+        return {
+            chunk_id: chunk_texts[chunk_id] for chunk_id in chunk_ids if chunk_id in chunk_texts
+        }
+
     source = mods.QdrantEvidenceSource(
-        settings, embedder=embedder, store=store, sparse_encoder=sparse_encoder
+        settings,
+        embedder=embedder,
+        store=store,
+        sparse_encoder=sparse_encoder,
+        text_resolver=resolver if chunk_texts is not None else None,
     )
     config_versions: set[str] = set()
 
@@ -445,11 +465,9 @@ def main() -> None:
         dump_labels()
         return
 
-    unsupported = [name for name in args.strategies if name not in ("dense", "hybrid")]
+    unsupported = [name for name in args.strategies if name not in STRATEGIES]
     if unsupported:
-        raise SystemExit(
-            f"策略 {unsupported} 尚未实现（Rerank 适配器属 S4）；当前可评测 dense 与 hybrid"
-        )
+        raise SystemExit(f"未知策略 {unsupported}；可选 {list(STRATEGIES)}")
 
     settings = eval_settings(no_proxy=args.no_proxy)
     manifest = load_manifest()
@@ -459,7 +477,8 @@ def main() -> None:
             status = await drop_collection(settings)
             print(f"删除评测集合 {EVAL_COLLECTION} -> HTTP {status}")
         # 稀疏向量一并写入：三档策略共用同一个索引，才能保证结果可比。
-        encoder = build_sparse_encoder(manifest, settings)
+        chunk_texts = corpus_chunk_map(manifest, settings)
+        encoder = build_sparse_encoder(manifest, settings, chunk_texts)
         if not args.evaluate_only:
             indexed = await index_corpus(settings, manifest, sparse_encoder=encoder)
             print(f"索引完成：{indexed} 个文档版本")
@@ -476,6 +495,7 @@ def main() -> None:
                 resume=args.resume,
                 top_k=args.top_k,
                 sparse_encoder=encoder,
+                chunk_texts=chunk_texts,
             )
             mods = backend()
             summary = mods.eval_metrics.summarize(results)
