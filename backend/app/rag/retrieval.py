@@ -24,6 +24,42 @@ from app.schemas.common import ContractModel
 # M1 固定个人语料；公共知识语料在后续阶段引入，届时经同一接口扩展。
 CORPUS: Literal["personal"] = "personal"
 
+# 检索策略（issue #25 的三档可复现对比）。dense 是 M1 基线，另两档在 M2 实现。
+RetrievalStrategy = Literal["dense", "hybrid", "hybrid_rerank"]
+
+
+def build_retrieval_config_version(
+    *,
+    strategy: RetrievalStrategy,
+    model_version: str,
+    dimension: int,
+    top_k: int,
+    sparse_weight: float | None = None,
+    rerank_model: str | None = None,
+) -> str:
+    """组装检索配置版本号；任何一项变化都产生新版本，旧结果不得被覆盖。
+
+    格式在此冻结（S0 决策），评测比较必须连同该版本号一起记录，否则无法说明
+    "三档是在同一条件下比出来的"：
+
+    * ``dense/text-embedding-v4@1024/top5``
+    * ``hybrid/w0.50/text-embedding-v4@1024/top5``
+    * ``hybrid_rerank/gte-rerank/w0.50/text-embedding-v4@1024/top5``
+
+    权重按两位小数归一（``w0.50``），避免浮点尾数让同一配置产生两个版本号。
+    """
+    core = f"{model_version}@{dimension}/top{top_k}"
+    if strategy == "dense":
+        return f"dense/{core}"
+    if sparse_weight is None:
+        raise ValueError(f"策略 {strategy} 必须给出稀疏通道权重")
+    weight = f"w{sparse_weight:.2f}"
+    if strategy == "hybrid":
+        return f"hybrid/{weight}/{core}"
+    if not rerank_model:
+        raise ValueError("hybrid_rerank 必须给出 rerank 模型名，否则无法区分是否真的重排过")
+    return f"hybrid_rerank/{rerank_model}/{weight}/{core}"
+
 
 class EvidenceCandidate(ContractModel):
     """一个候选 chunk 的身份与排序信息；quote/locator 由后端查 MongoDB 补齐。"""
@@ -113,8 +149,11 @@ class QdrantEvidenceSource:
         return EvidenceQueryResult(
             query=query,
             evidence=evidence,
-            retrieval_config_version=(
-                f"dense/{self._embedder.model_version}@{self._embedder.dimension}/top{top_k}"
+            retrieval_config_version=build_retrieval_config_version(
+                strategy="dense",
+                model_version=self._embedder.model_version,
+                dimension=self._embedder.dimension,
+                top_k=top_k,
             ),
             warnings=warnings,
         )

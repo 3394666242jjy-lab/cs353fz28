@@ -13,7 +13,12 @@ import pytest
 
 from app.config import Settings
 from app.rag.embeddings import EmbeddingError, HttpEmbeddingProvider
-from app.rag.retrieval import EvidenceQueryResult, QdrantEvidenceSource, get_evidence_source
+from app.rag.retrieval import (
+    EvidenceQueryResult,
+    QdrantEvidenceSource,
+    build_retrieval_config_version,
+    get_evidence_source,
+)
 from app.rag.vector_store import QdrantVectorStore
 from app.schemas.analysis import DocumentVersion
 
@@ -188,6 +193,46 @@ def test_default_top_k_comes_from_settings():
     asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="q"))
 
     assert search_body(calls)["limit"] == settings().retrieval_top_k
+
+
+def test_retrieval_config_version_format_is_frozen_for_three_strategies():
+    """三档策略的版本号格式在此冻结：评测比较必须能据此判断是否同一条件。"""
+    dense = build_retrieval_config_version(
+        strategy="dense", model_version="text-embedding-v4", dimension=1024, top_k=5
+    )
+    hybrid = build_retrieval_config_version(
+        strategy="hybrid",
+        model_version="text-embedding-v4",
+        dimension=1024,
+        top_k=5,
+        sparse_weight=0.5,
+    )
+    reranked = build_retrieval_config_version(
+        strategy="hybrid_rerank",
+        model_version="text-embedding-v4",
+        dimension=1024,
+        top_k=5,
+        sparse_weight=0.5,
+        rerank_model="gte-rerank",
+    )
+
+    assert dense == "dense/text-embedding-v4@1024/top5"
+    assert hybrid == "hybrid/w0.50/text-embedding-v4@1024/top5"
+    assert reranked == "hybrid_rerank/gte-rerank/w0.50/text-embedding-v4@1024/top5"
+
+
+def test_retrieval_config_version_rejects_incomplete_strategy_parameters():
+    """缺权重或缺 rerank 模型时拒绝生成版本号，避免产出无法复现的"已重排"记录。"""
+    with pytest.raises(ValueError):
+        build_retrieval_config_version(strategy="hybrid", model_version="m", dimension=64, top_k=5)
+    with pytest.raises(ValueError):
+        build_retrieval_config_version(
+            strategy="hybrid_rerank",
+            model_version="m",
+            dimension=64,
+            top_k=5,
+            sparse_weight=0.5,
+        )
 
 
 def test_repeated_query_is_deterministic():
