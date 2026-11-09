@@ -54,7 +54,8 @@ def backend() -> SimpleNamespace:
         if str(BACKEND) not in sys.path:
             sys.path.insert(0, str(BACKEND))
         import app.rag.eval_metrics as eval_metrics
-        from app.config import get_settings
+        from app.config import Settings, get_settings
+        from app.rag.bm25 import Bm25Encoder
         from app.rag.chunking import chunk_document, parse_document
         from app.rag.embeddings import get_embedding_provider
         from app.rag.indexer import index_document, make_chunk_id
@@ -63,7 +64,9 @@ def backend() -> SimpleNamespace:
         from app.schemas.analysis import DocumentVersion
 
         _BACKEND = SimpleNamespace(
+            Settings=Settings,
             eval_metrics=eval_metrics,
+            Bm25Encoder=Bm25Encoder,
             get_settings=get_settings,
             parse_document=parse_document,
             chunk_document=chunk_document,
@@ -160,7 +163,57 @@ async def drop_collection(settings) -> int:
     return response.status_code
 
 
-async def index_corpus(settings, manifest: dict) -> int:
+def corpus_chunk_texts(manifest: dict, settings) -> list[str]:
+    """按运行期切分参数还原语料的所有 chunk 原文。
+
+    用于统计 BM25 的 idf，也用于打印标注对照表；两条路径必须与索引时的切分完全
+    一致，否则 idf 与稀疏向量就对不上。
+    """
+    mods = backend()
+    texts: list[str] = []
+    for document in manifest["documents"]:
+        raw = (CORPUS_DIR / document["path"]).read_bytes()
+        parsed = mods.parse_document(raw, file_type=document["file_type"])
+        if parsed.pages is None:
+            parts = [mods.chunk_document(parsed.lines, max_chars=settings.chunk_max_chars)]
+        else:
+            parts = [
+                mods.chunk_document(page, max_chars=settings.chunk_max_chars)
+                for page in parsed.pages
+            ]
+        texts.extend(chunk.text for part in parts for chunk in part)
+    return texts
+
+
+def build_sparse_encoder(manifest: dict, settings):
+    """按评测语料统计 idf，并把统计结果留档以便复现。
+
+    IDF 决定稀疏通道的语义，因此它和结果一起落盘：换一份语料统计出的 idf 会得到
+    不同的混合检索行为，不能把两次结果当成同一配置的比较。
+    """
+    mods = backend()
+    texts = corpus_chunk_texts(manifest, settings)
+    encoder = mods.Bm25Encoder.fit(texts)
+    payload = {
+        "corpus_questions_sha256": manifest["questions_sha256"],
+        "chunk_count": len(texts),
+        "avg_doc_len": encoder.avg_doc_len,
+        "k1": encoder.k1,
+        "b": encoder.b,
+        "default_idf": encoder.default_idf,
+        "idf": encoder.idf,
+    }
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    (RESULTS_DIR / "idf.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    print(f"BM25 idf 统计完成：{len(texts)} 个 chunk，{len(encoder.idf)} 个词项，已留档")
+    return encoder
+
+
+async def index_corpus(settings, manifest: dict, sparse_encoder=None) -> int:
     """把语料逐文档逐版本索引进评测集合；已索引的版本跳过。"""
     mods = backend()
     store = mods.get_vector_store(settings)
@@ -183,6 +236,7 @@ async def index_corpus(settings, manifest: dict) -> int:
                 version=document["version"],
                 file_type=document["file_type"],
                 settings=settings,
+                sparse_encoder=sparse_encoder,
             )
             indexed += 1
             print(f"  索引 {document['document_id']} v{document['version']} -> OK")
@@ -231,6 +285,7 @@ async def evaluate(
     *,
     resume: bool,
     top_k: int | None,
+    sparse_encoder=None,
 ) -> list:
     """逐条检索并把结果增量写入 JSONL；中断后可用 --resume 续跑。"""
     mods = backend()
@@ -243,10 +298,15 @@ async def evaluate(
             if line.strip():
                 done.add(json.loads(line)["question_id"])
         print(f"  续跑：已完成 {len(done)} 条")
+    elif path.exists():
+        # 不续跑时必须清空旧结果，否则会与上一轮的行混在一起、指标被重复计数。
+        path.unlink()
 
     embedder = TimedEmbedder(mods.get_embedding_provider(settings))
     store = TimedStore(mods.get_vector_store(settings))
-    source = mods.QdrantEvidenceSource(settings, embedder=embedder, store=store)
+    source = mods.QdrantEvidenceSource(
+        settings, embedder=embedder, store=store, sparse_encoder=sparse_encoder
+    )
     config_versions: set[str] = set()
 
     with path.open("a", encoding="utf-8", newline="\n") as sink:
@@ -385,10 +445,10 @@ def main() -> None:
         dump_labels()
         return
 
-    unsupported = [name for name in args.strategies if name != "dense"]
+    unsupported = [name for name in args.strategies if name not in ("dense", "hybrid")]
     if unsupported:
         raise SystemExit(
-            f"策略 {unsupported} 尚未实现（混合检索 S3、Rerank S4）；当前只能评测 dense"
+            f"策略 {unsupported} 尚未实现（Rerank 适配器属 S4）；当前可评测 dense 与 hybrid"
         )
 
     settings = eval_settings(no_proxy=args.no_proxy)
@@ -398,20 +458,24 @@ def main() -> None:
         if args.rebuild:
             status = await drop_collection(settings)
             print(f"删除评测集合 {EVAL_COLLECTION} -> HTTP {status}")
+        # 稀疏向量一并写入：三档策略共用同一个索引，才能保证结果可比。
+        encoder = build_sparse_encoder(manifest, settings)
         if not args.evaluate_only:
-            indexed = await index_corpus(settings, manifest)
+            indexed = await index_corpus(settings, manifest, sparse_encoder=encoder)
             print(f"索引完成：{indexed} 个文档版本")
         if args.index_only:
             return
         questions = load_questions()
         for strategy in args.strategies:
             print(f"\n开始评测策略 {strategy}（{len(questions)} 条问题）")
+            strategy_settings = settings.model_copy(update={"retrieval_strategy": strategy})
             results = await evaluate(
-                settings,
+                strategy_settings,
                 questions,
                 strategy,
                 resume=args.resume,
                 top_k=args.top_k,
+                sparse_encoder=encoder,
             )
             mods = backend()
             summary = mods.eval_metrics.summarize(results)
