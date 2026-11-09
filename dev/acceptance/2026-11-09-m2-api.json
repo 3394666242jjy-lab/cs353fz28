@@ -1,0 +1,59 @@
+{
+  "real_model": true,
+  "real_embedding": true,
+  "real_mongodb": true,
+  "real_redis": true,
+  "real_qdrant": true,
+  "findings": [
+    {
+      "name": "real_initial_analysis_pauses",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "worker_restarted_while_waiting",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "free_text_does_not_become_evidence",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "supplemented_real_analysis_saved",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "citation_resolves_to_source",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "citation_resolves_to_source",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "other_user_analysis_rejected",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "draft_waits_for_confirmation",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "confirmation_is_idempotent",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "other_user_plan_rejected",
+      "passed": true,
+      "detail": null
+    }
+  ]
+}
