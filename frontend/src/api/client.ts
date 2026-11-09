@@ -133,5 +133,20 @@ export const api = {
     request<Evidence>('GET', `/api/v1/evidence/${encodeURIComponent(chunkId)}?version=${version}`, {
       signal,
     }),
+  resumeExecution: (id: string, body: components['schemas']['ResumeRequest']) =>
+    request<ExecutionAccepted>('POST', `/api/v1/executions/${encodeURIComponent(id)}/resume`, {
+      body,
+    }),
+  createPlan: (body: components['schemas']['PlanCreate']) =>
+    request<ExecutionAccepted>('POST', '/api/v1/plans', { body }),
+  getPlan: (id: string, signal?: AbortSignal) =>
+    request<components['schemas']['PlanResult']>('GET', `/api/v1/plans/${encodeURIComponent(id)}`, {
+      signal,
+    }),
+  confirmPlan: (id: string) =>
+    request<components['schemas']['PlanConfirmed']>(
+      'POST',
+      `/api/v1/plans/${encodeURIComponent(id)}/confirm`,
+    ),
   docsUrl: `${base}/docs`,
 };

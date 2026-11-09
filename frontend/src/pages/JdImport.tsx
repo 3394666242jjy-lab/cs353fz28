@@ -3,6 +3,8 @@ import { api } from '../api/client';
 import { describeError, isAbortError, type UiError } from '../api/errors';
 import { sampleAnalysis, sampleEvidence } from '../api/fixtures';
 import StatusBadge from '../components/StatusBadge';
+import ClarificationPanel from './ClarificationPanel';
+import PreparationPlan from './PreparationPlan';
 import type { components } from '../api/schema';
 
 type AnalysisResult = components['schemas']['AnalysisResult'];
@@ -10,7 +12,7 @@ type ExecutionResult = components['schemas']['ExecutionResult'];
 type Evidence = components['schemas']['Evidence'];
 type EvidenceRef = components['schemas']['EvidenceRef'];
 
-type Phase = 'idle' | 'creating' | 'polling' | 'succeeded' | 'failed';
+type Phase = 'idle' | 'creating' | 'polling' | 'waiting' | 'succeeded' | 'failed';
 type Mode = 'real' | 'sample';
 
 const POLL_INTERVAL_MS = 1500;
@@ -27,11 +29,13 @@ const phaseLabels: Record<Phase, string> = {
   idle: '等待开始',
   creating: '正在创建岗位与分析任务…',
   polling: '分析执行中…',
+  waiting: '等待补充资料',
   succeeded: '分析完成',
   failed: '分析失败',
 };
 
 interface JdImportProps {
+  userId?: string;
   /** 父组件 App 传入的 JD 原文。 */
   jd: string;
   /** 岗位名称，对应 POST /jobs 的 title。 */
@@ -56,6 +60,7 @@ function readPendingExecution(): { executionId: string; startedAt: number } | nu
     if (parsed.mode === 'real' && parsed.executionId) {
       return { executionId: parsed.executionId, startedAt: parsed.startedAt ?? Date.now() };
     }
+    if ((parsed as { completedAnalysisId?: string }).completedAnalysisId) return null;
   } catch {
     // 本地状态损坏时直接丢弃，避免阻塞页面。
   }
@@ -63,7 +68,14 @@ function readPendingExecution(): { executionId: string; startedAt: number } | nu
   return null;
 }
 
-export default function JdImport({ jd, title = '', documentIds = [], onAnalysis }: JdImportProps) {
+export default function JdImport({
+  jd,
+  title = '',
+  documentIds = [],
+  onAnalysis,
+  userId,
+}: JdImportProps) {
+  const resultKey = `careerpilot.completed_analysis.${userId ?? 'anonymous'}`;
   const [mode, setMode] = useState<Mode>('real');
   const [phase, setPhase] = useState<Phase>('idle');
   const [execution, setExecution] = useState<ExecutionResult | null>(null);
@@ -91,11 +103,15 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
   useEffect(() => {
     const ids = JSON.stringify(documentIds);
     const previous = inputRef.current;
-    if (previous.jd !== jd || previous.title !== title || previous.documentIds !== ids) {
-      inputRef.current = { jd, title, documentIds: ids };
+    inputRef.current = { jd, title, documentIds: ids };
+    if (
+      previous.jd !== jd ||
+      previous.title !== title ||
+      (previous.documentIds !== ids && phase !== 'waiting')
+    ) {
       reset();
     }
-  }, [jd, title, documentIds]);
+  }, [jd, title, documentIds, phase]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -107,6 +123,24 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
       const controller = new AbortController();
       abortRef.current = controller;
       poll(saved.executionId, controller);
+    } else if (userId) {
+      const resultId = sessionStorage.getItem(resultKey);
+      if (resultId) {
+        const controller = new AbortController();
+        abortRef.current = controller;
+        api
+          .getAnalysis(resultId, controller.signal)
+          .then((res) => {
+            if (!controller.signal.aborted) {
+              setAnalysis(res.data);
+              setPhase('succeeded');
+              onAnalysisRef.current?.(res.data);
+            }
+          })
+          .catch(() => {
+            if (!controller.signal.aborted) sessionStorage.removeItem(resultKey);
+          });
+      }
     }
     return () => {
       mountedRef.current = false;
@@ -159,10 +193,8 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
         } else if (exec.status === 'failed') {
           fail(exec.error ?? { code: 'EXECUTION_FAILED', message: '分析任务失败。' });
         } else if (exec.status === 'waiting_for_input') {
-          fail({
-            code: 'WAITING_INPUT',
-            message: '分析请求补充信息。M1 不进入等待输入，若出现请按 M2 的恢复流程处理。',
-          });
+          stopTimers();
+          setPhase('waiting');
         }
       } catch (err) {
         if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
@@ -186,7 +218,11 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     try {
       const res = await api.getAnalysis(exec.result_id, controller.signal);
       if (!mountedRef.current || controller.signal.aborted) return;
-      sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ mode: 'real', jd, title, completedAnalysisId: res.data.id }),
+      );
+      sessionStorage.setItem(resultKey, res.data.id);
       setAnalysis(res.data);
       setPhase('succeeded');
       setSelectedKey(null);
@@ -204,6 +240,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
     abortRef.current = null;
     evidenceRequestRef.current += 1;
     sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(resultKey);
     setPhase('idle');
     setExecution(null);
     setAnalysis(null);
@@ -384,7 +421,7 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
           type="button"
           className="primary-button"
           onClick={() => void (mode === 'real' ? startReal() : startSample())}
-          disabled={running}
+          disabled={running || phase === 'waiting'}
         >
           {running ? '分析中…' : phase === 'succeeded' ? '重新分析' : '开始分析'}
         </button>
@@ -432,6 +469,35 @@ export default function JdImport({ jd, title = '', documentIds = [], onAnalysis 
         )}
       </div>
 
+      {phase === 'waiting' && execution?.pending_input?.kind === 'clarification' && (
+        <ClarificationPanel
+          key={execution.pending_input.interrupt_id}
+          execution={execution}
+          onResumed={() => {
+            setError(null);
+            setPhase('polling');
+            const controller = new AbortController();
+            abortRef.current?.abort();
+            abortRef.current = controller;
+            const now = Date.now();
+            setStartedAt(now);
+            sessionStorage.setItem(
+              STORAGE_KEY,
+              JSON.stringify({
+                mode: 'real',
+                executionId: execution.id,
+                startedAt: now,
+                jd,
+                title,
+              }),
+            );
+            poll(execution.id, controller);
+          }}
+        />
+      )}
+      {analysis && mode === 'real' && !analysis.stale && (
+        <PreparationPlan key={analysis.id} analysisId={analysis.id} />
+      )}
       {analysis && (
         <div className="analysis-result">
           <div className="section-heading">
