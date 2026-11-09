@@ -12,11 +12,13 @@ import httpx
 import pytest
 
 from app.config import Settings
+from app.rag.bm25 import Bm25Encoder
 from app.rag.embeddings import EmbeddingError, HttpEmbeddingProvider
 from app.rag.retrieval import (
     EvidenceQueryResult,
     QdrantEvidenceSource,
     build_retrieval_config_version,
+    fuse_hits,
     get_evidence_source,
 )
 from app.rag.vector_store import QdrantVectorStore
@@ -58,7 +60,7 @@ def hit(chunk_id: str, score: float, version: int = 1) -> dict:
     }
 
 
-def source(hits: list[dict], *, embedding_status: int = 200):
+def source(hits: list[dict], *, embedding_status: int = 200, **overrides):
     """构建被测候选源（真实适配器）并返回请求记录列表。"""
     calls: list[httpx.Request] = []
 
@@ -84,7 +86,7 @@ def source(hits: list[dict], *, embedding_status: int = 200):
         raise AssertionError(f"unexpected request: {url}")
 
     transport = httpx.MockTransport(handler)
-    config = settings()
+    config = settings(**overrides)
     embedder = HttpEmbeddingProvider(config, transport=transport)
     store = QdrantVectorStore(config, transport=transport)
     return QdrantEvidenceSource(config, embedder=embedder, store=store), calls
@@ -243,3 +245,146 @@ def test_repeated_query_is_deterministic():
     second = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="Redis 缓存"))
 
     assert first == second
+
+
+def dense_hits(**scores: float) -> list:
+    """按 chunk_id -> 分数构造稠密通道命中。"""
+    from app.rag.vector_store import SearchHit
+
+    return [
+        SearchHit(
+            chunk_id=chunk_id,
+            document_id="doc_demo",
+            version=1,
+            corpus="personal",
+            score=score,
+        )
+        for chunk_id, score in scores.items()
+    ]
+
+
+def test_fuse_hits_normalises_channels_before_weighting():
+    """两路分数数量级不同，必须先各自归一再加权，否则 BM25 会通吃。"""
+    dense = dense_hits(a=0.80, b=0.60)
+    sparse = dense_hits(a=12.0, c=6.0)
+
+    fused = {hit.chunk_id: hit.score for hit in fuse_hits(dense, sparse, sparse_weight=0.5)}
+
+    assert fused["a"] == pytest.approx(0.5 * 1.0 + 0.5 * 1.0)
+    assert fused["b"] == pytest.approx(0.5 * 0.0 + 0.5 * 0.0)
+    assert fused["c"] == pytest.approx(0.5 * 0.0 + 0.5 * 0.0)
+
+
+def test_fuse_hits_prefers_channel_where_weight_is_higher():
+    """通道权重决定偏向：稀疏权重高时，只在稀疏通道命中的候选应排在前面。"""
+    dense = dense_hits(only_dense=0.90, both=0.50)
+    sparse = dense_hits(only_sparse=9.0, both=1.0)
+
+    top = fuse_hits(dense, sparse, sparse_weight=0.9)[0]
+
+    assert top.chunk_id in {"both", "only_sparse"}
+    assert top.chunk_id != "only_dense"
+
+
+def test_fuse_hits_is_deterministic_on_ties():
+    """分数相同时按 chunk_id 决定顺序，同一输入两次运行必须一致。"""
+    dense = dense_hits(b=0.5)
+    sparse = dense_hits(a=5.0)
+
+    first = [hit.chunk_id for hit in fuse_hits(dense, sparse, sparse_weight=0.5)]
+    second = [hit.chunk_id for hit in fuse_hits(dense, sparse, sparse_weight=0.5)]
+
+    assert first == second == ["a", "b"]
+
+
+def test_fuse_hits_rejects_degenerate_weights():
+    """权重取 0 或 1 等于关掉一路通道，应显式报错而不是静默退化成单通道。"""
+    with pytest.raises(ValueError):
+        fuse_hits([], [], sparse_weight=0.0)
+    with pytest.raises(ValueError):
+        fuse_hits([], [], sparse_weight=1.0)
+
+
+def test_hybrid_strategy_queries_both_channels_and_reports_weight():
+    """混合策略：两路各取候选后融合，配置版本号带上通道权重。"""
+    encoder = Bm25Encoder(idf={"缓存": 1.5, "命中": 1.5}, avg_doc_len=4.0)
+    config = settings(retrieval_strategy="hybrid", hybrid_candidates_per_channel=10)
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        url = str(request.url)
+        if url == EMBEDDING_URL:
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [0.01] * DIMENSION}]}
+            )
+        if url == SEARCH_URL:
+            body = json.loads(request.content)
+            name = body["vector"]["name"]
+            if name == "sparse":
+                return httpx.Response(200, json={"result": [hit("from_sparse", 9.0)]})
+            return httpx.Response(200, json={"result": [hit("from_dense", 0.9)]})
+        raise AssertionError(f"unexpected request: {url}")
+
+    transport = httpx.MockTransport(handler)
+    adapter = QdrantEvidenceSource(
+        config,
+        embedder=HttpEmbeddingProvider(config, transport=transport),
+        store=QdrantVectorStore(config, transport=transport),
+        sparse_encoder=encoder,
+    )
+
+    result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))
+
+    names = [json.loads(c.content)["vector"]["name"] for c in calls if str(c.url) == SEARCH_URL]
+    assert names == ["dense", "sparse"]
+    assert {item.chunk_id for item in result.evidence} == {"from_dense", "from_sparse"}
+    assert result.retrieval_config_version == "hybrid/w0.50/text-embedding-v4@64/top5"
+
+
+def test_hybrid_strategy_uses_identical_filters_on_both_channels():
+    """两路必须共用同一套用户与版本过滤，否则隔离条件会在某一路失守。"""
+    encoder = Bm25Encoder(idf={"缓存": 1.5}, avg_doc_len=4.0)
+    config = settings(retrieval_strategy="hybrid")
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if str(request.url) == EMBEDDING_URL:
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [0.01] * DIMENSION}]}
+            )
+        return httpx.Response(200, json={"result": []})
+
+    transport = httpx.MockTransport(handler)
+    adapter = QdrantEvidenceSource(
+        config,
+        embedder=HttpEmbeddingProvider(config, transport=transport),
+        store=QdrantVectorStore(config, transport=transport),
+        sparse_encoder=encoder,
+    )
+    versions = [DocumentVersion(document_id="doc_demo", version=1)]
+
+    asyncio.run(
+        adapter.retrieve_evidence(user_id="user_c", query="缓存", document_versions=versions)
+    )
+
+    bodies = [json.loads(c.content) for c in calls if str(c.url) == SEARCH_URL]
+    assert len(bodies) == 2
+    assert bodies[0]["filter"] == bodies[1]["filter"]
+
+
+def test_hybrid_without_encoder_fails_instead_of_falling_back_to_dense():
+    """缺 IDF 语料时不得偷偷退回稠密检索——否则结果会被当成交付的混合结果。"""
+    adapter, _ = source([hit("chunk_a", 0.5)], retrieval_strategy="hybrid")
+
+    with pytest.raises(RuntimeError, match="BM25 编码器"):
+        asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存"))
+
+
+def test_hybrid_rerank_strategy_fails_loudly_until_implemented():
+    """未实现的档位必须报错，不能返回未重排结果冒充已重排。"""
+    adapter, _ = source([hit("chunk_a", 0.5)], retrieval_strategy="hybrid_rerank")
+
+    with pytest.raises(RuntimeError, match="尚未实现"):
+        asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存"))

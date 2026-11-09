@@ -1,10 +1,15 @@
-"""证据检索（RAG 模块，成员 C，issue #8。
+"""证据检索（RAG 模块，成员 C，issue #8 / #25）。
 
-架构文档固定的 M1 范围：语料仅 personal、检索仅稠密向量。本模块把查询向量化、
-执行按用户隔离的向量检索，然后返回**后端查询 chunk 原文所需的元数据**——
-quote 与 locator 的权威副本在 MongoDB（成员 B 的数据域），因此这里刻意不做文本
-拼接：在此放一个替身会把设计明确分开的边界弄浑。检索为空时返回明确原因，
+本模块把查询向量化、执行按用户隔离的检索，然后返回**后端查询 chunk 原文所需的
+元数据**——quote 与 locator 的权威副本在 MongoDB（成员 B 的数据域），因此这里刻意
+不做文本拼接：在此放一个替身会把设计明确分开的边界弄浑。检索为空时返回明确原因，
 绝不生成假证据（开发规范）。
+
+三档策略（issue #25）：
+
+* ``dense`` —— M1 基线，只用稠密向量；
+* ``hybrid`` —— 稠密 + BM25 关键词稀疏，两路各取候选后按通道权重融合；
+* ``hybrid_rerank`` —— 在 hybrid 之上再重排，属 S4，未实现前显式报错，绝不静默降级。
 
 契约如何组合：
 
@@ -16,8 +21,9 @@ quote 与 locator 的权威副本在 MongoDB（成员 B 的数据域），因此
 from typing import Literal, Protocol
 
 from app.config import Settings, get_settings
+from app.rag.bm25 import Bm25Encoder
 from app.rag.embeddings import EmbeddingProvider, get_embedding_provider
-from app.rag.vector_store import VectorStore, get_vector_store
+from app.rag.vector_store import SearchHit, VectorStore, get_vector_store
 from app.schemas.analysis import DocumentVersion
 from app.schemas.common import ContractModel
 
@@ -95,6 +101,53 @@ class EvidenceCandidateSource(Protocol):
         ...
 
 
+def _normalise(scores: dict[str, float]) -> dict[str, float]:
+    """把一路通道的分数 min-max 归一到 [0, 1]。
+
+    稠密余弦分与 BM25 分数量级不同，直接加权求和无异于让一路通吃。通道内只有一个
+    候选（或分数全相同）时统一给 1.0，避免把唯一候选压成 0。
+    """
+    if not scores:
+        return {}
+    low, high = min(scores.values()), max(scores.values())
+    if high - low < 1e-12:
+        return {chunk_id: 1.0 for chunk_id in scores}
+    return {chunk_id: (score - low) / (high - low) for chunk_id, score in scores.items()}
+
+
+def fuse_hits(
+    dense_hits: list[SearchHit],
+    sparse_hits: list[SearchHit],
+    *,
+    sparse_weight: float,
+) -> list[SearchHit]:
+    """按权重融合稠密与稀疏两路候选。
+
+    权重是**通道**权重，不是原始分量级权重：两路先各自归一，再按
+    (1 - w) * dense + w * sparse 合成。只在某一通道出现的候选，另一通道记 0。
+
+    排序在分数相同时按 chunk_id 决定，保证同一输入两次运行结果完全一致。
+    """
+    if not 0 < sparse_weight < 1:
+        raise ValueError(f"稀疏权重必须落在 (0, 1) 开区间，收到 {sparse_weight}")
+    dense_scores = _normalise({hit.chunk_id: hit.score for hit in dense_hits})
+    sparse_scores = _normalise({hit.chunk_id: hit.score for hit in sparse_hits})
+    by_id: dict[str, SearchHit] = {}
+    for hit in [*dense_hits, *sparse_hits]:
+        by_id.setdefault(hit.chunk_id, hit)
+    fused = [
+        hit.model_copy(
+            update={
+                "score": (1 - sparse_weight) * dense_scores.get(chunk_id, 0.0)
+                + sparse_weight * sparse_scores.get(chunk_id, 0.0)
+            }
+        )
+        for chunk_id, hit in by_id.items()
+    ]
+    fused.sort(key=lambda hit: (-hit.score, hit.chunk_id))
+    return fused
+
+
 class QdrantEvidenceSource:
     """基于向量库的候选源实现：查询向量化 + 用户隔离检索 + 结果组装。"""
 
@@ -104,11 +157,13 @@ class QdrantEvidenceSource:
         *,
         embedder: EmbeddingProvider | None = None,
         store: VectorStore | None = None,
+        sparse_encoder: Bm25Encoder | None = None,
     ) -> None:
         # 依赖均可注入：测试可传 MockTransport 适配器，生产默认从全局配置构建。
         self._settings = settings
         self._embedder = embedder or get_embedding_provider(settings)
         self._store = store or get_vector_store(settings)
+        self._sparse_encoder = sparse_encoder
 
     async def retrieve_evidence(
         self,
@@ -126,13 +181,36 @@ class QdrantEvidenceSource:
         if not query.strip():
             raise ValueError("查询文本不能为空白")
         top_k = top_k if top_k is not None else self._settings.retrieval_top_k
+        strategy = self._settings.retrieval_strategy
         (query_vector,) = await self._embedder.embed_texts([query])
-        hits = await self._store.search(
-            user_id=user_id,
-            vector=query_vector,
-            document_versions=document_versions,
-            top_k=top_k,
-        )
+
+        if strategy == "dense":
+            hits = await self._store.search(
+                user_id=user_id,
+                vector=query_vector,
+                document_versions=document_versions,
+                top_k=top_k,
+            )
+            config_version = build_retrieval_config_version(
+                strategy="dense",
+                model_version=self._embedder.model_version,
+                dimension=self._embedder.dimension,
+                top_k=top_k,
+            )
+        elif strategy == "hybrid":
+            hits, config_version = await self._hybrid_hits(
+                user_id=user_id,
+                query=query,
+                query_vector=query_vector,
+                document_versions=document_versions,
+                top_k=top_k,
+            )
+        else:
+            raise RuntimeError(
+                f"检索策略 {strategy} 尚未实现（Rerank 适配器属 S4）；"
+                "不得静默降级为未重排结果，否则评测结论会被污染"
+            )
+
         evidence = [
             EvidenceCandidate(
                 chunk_id=hit.chunk_id,
@@ -141,7 +219,7 @@ class QdrantEvidenceSource:
                 corpus=hit.corpus,
                 retrieval_score=hit.score,
             )
-            for hit in hits
+            for hit in hits[:top_k]
         ]
         warnings = []
         if not evidence:
@@ -149,14 +227,46 @@ class QdrantEvidenceSource:
         return EvidenceQueryResult(
             query=query,
             evidence=evidence,
-            retrieval_config_version=build_retrieval_config_version(
-                strategy="dense",
-                model_version=self._embedder.model_version,
-                dimension=self._embedder.dimension,
-                top_k=top_k,
-            ),
+            retrieval_config_version=config_version,
             warnings=warnings,
         )
+
+    async def _hybrid_hits(
+        self,
+        *,
+        user_id: str,
+        query: str,
+        query_vector: list[float],
+        document_versions: list[DocumentVersion] | None,
+        top_k: int,
+    ) -> tuple[list[SearchHit], str]:
+        """两路各取候选后按权重融合；缺编码器必须报错而不是退回稠密。"""
+        if self._sparse_encoder is None:
+            raise RuntimeError(
+                "混合检索需要 BM25 编码器（含 IDF 语料统计）；未提供时不得降级为稠密检索"
+            )
+        sparse_weight = self._settings.hybrid_sparse_weight
+        per_channel = max(top_k, self._settings.hybrid_candidates_per_channel)
+        dense_hits = await self._store.search(
+            user_id=user_id,
+            vector=query_vector,
+            document_versions=document_versions,
+            top_k=per_channel,
+        )
+        sparse_hits = await self._store.search_sparse(
+            user_id=user_id,
+            sparse_vector=self._sparse_encoder.encode_query(query),
+            document_versions=document_versions,
+            top_k=per_channel,
+        )
+        config_version = build_retrieval_config_version(
+            strategy="hybrid",
+            model_version=self._embedder.model_version,
+            dimension=self._embedder.dimension,
+            top_k=top_k,
+            sparse_weight=sparse_weight,
+        )
+        return fuse_hits(dense_hits, sparse_hits, sparse_weight=sparse_weight), config_version
 
 
 def get_evidence_source(
@@ -164,7 +274,10 @@ def get_evidence_source(
     *,
     embedder: EmbeddingProvider | None = None,
     store: VectorStore | None = None,
+    sparse_encoder: Bm25Encoder | None = None,
 ) -> EvidenceCandidateSource:
     """工厂：默认从全局配置构建候选源；可显式注入配置与依赖供测试使用。"""
     settings = settings or get_settings()
-    return QdrantEvidenceSource(settings, embedder=embedder, store=store)
+    return QdrantEvidenceSource(
+        settings, embedder=embedder, store=store, sparse_encoder=sparse_encoder
+    )
