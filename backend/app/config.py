@@ -68,7 +68,10 @@ class Settings(BaseSettings):
     # 进入 retrieval_config_version，任何一项变化都产生新版本号，不覆盖旧结果。
     retrieval_strategy: Literal["dense", "hybrid", "hybrid_rerank"] = "dense"
     # 混合检索融合权重：稀疏通道占比 w，稠密通道占 1-w（各档必须在同一 w 下比较）。
-    hybrid_sparse_weight: float = Field(default=0.5, gt=0.0, lt=1.0)
+    # 0.30 由开发集扫描得出（dev/13 第 4 节）：0.30/0.50/0.70 三档在 12 条开发集
+    # 问题上只相差 1 道题，样本量不足以证明"更优"，取 0.30 是"数据指向 + 机制一致"
+    # 的结果而非统计结论；扩充开发集后应重新确认。
+    hybrid_sparse_weight: float = Field(default=0.30, gt=0.0, lt=1.0)
     # 每个通道在融合前各自召回的候选数；应大于等于 retrieval_top_k 才谈得上重排空间。
     hybrid_candidates_per_channel: int = Field(default=20, ge=1, le=200)
 

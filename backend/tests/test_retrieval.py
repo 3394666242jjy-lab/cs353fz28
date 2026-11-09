@@ -325,7 +325,11 @@ class StubRerank:
 
 def hybrid_adapter(*, dense, sparse, texts, order):
     """构造一个 hybrid_rerank 适配器：两路检索与原文解析都用桩实现。"""
-    config = settings(retrieval_strategy="hybrid_rerank", hybrid_candidates_per_channel=10)
+    config = settings(
+        retrieval_strategy="hybrid_rerank",
+        hybrid_candidates_per_channel=10,
+        hybrid_sparse_weight=0.5,
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         if str(request.url) == EMBEDDING_URL:
@@ -355,7 +359,10 @@ def hybrid_adapter(*, dense, sparse, texts, order):
 def test_hybrid_strategy_queries_both_channels_and_reports_weight():
     """混合策略：两路各取候选后融合，配置版本号带上通道权重。"""
     encoder = Bm25Encoder(idf={"缓存": 1.5, "命中": 1.5}, avg_doc_len=4.0)
-    config = settings(retrieval_strategy="hybrid", hybrid_candidates_per_channel=10)
+    # 显式钉住权重：本用例验证融合与版本号格式，不应随默认值调整而变化。
+    config = settings(
+        retrieval_strategy="hybrid", hybrid_candidates_per_channel=10, hybrid_sparse_weight=0.5
+    )
     calls: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
