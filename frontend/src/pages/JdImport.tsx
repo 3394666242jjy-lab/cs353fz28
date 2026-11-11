@@ -132,6 +132,7 @@ export default function JdImport({
   const [selectedEvidence, setSelectedEvidence] = useState<Evidence | null>(null);
   const [evidenceLoading, setEvidenceLoading] = useState<string | null>(null);
   const [streamNotice, setStreamNotice] = useState<string | null>(null);
+  const [streamStage, setStreamStage] = useState<string | null>(null);
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null);
   const [resumeText, setResumeText] = useState('');
   const [continueWithoutEvidence, setContinueWithoutEvidence] = useState(false);
@@ -234,6 +235,7 @@ export default function JdImport({
     sessionStorage.removeItem(STORAGE_KEY);
     sessionStorage.removeItem(CURSOR_KEY);
     setStreamNotice(null);
+    setStreamStage(null);
     setPendingInput(null);
     setResumeError(null);
     setPhase('failed');
@@ -249,12 +251,14 @@ export default function JdImport({
     setPhase('waiting');
     setResumeError(null);
     setStreamNotice(null);
+    setStreamStage(null);
   }
 
   function fallbackToPoll(executionId: string, controller: AbortController, reason: string) {
     if (finishedRef.current || fallingBackRef.current) return;
     fallingBackRef.current = true;
     closeStream();
+    setStreamStage(null);
     setStreamNotice(`${reason}已自动切换为轮询任务状态。`);
     poll(executionId, controller);
   }
@@ -314,6 +318,7 @@ export default function JdImport({
       sessionStorage.removeItem(STORAGE_KEY);
       sessionStorage.removeItem(CURSOR_KEY);
       setStreamNotice(null);
+      setStreamStage(null);
       setPendingInput(null);
       setResumeError(null);
       setAnalysis(res.data);
@@ -338,6 +343,7 @@ export default function JdImport({
         if (!mountedRef.current || finishedRef.current || controller.signal.aborted) return;
         saveCursor(executionId, event.id);
         const data = event.data;
+        if (data.stage) setStreamStage(data.stage);
         setExecution((previous) => ({
           id: executionId,
           type: previous?.type ?? 'analysis',
@@ -411,7 +417,18 @@ export default function JdImport({
         controller.signal,
       );
       if (!mountedRef.current || controller.signal.aborted) return;
-      initialDocumentIdsRef.current = [...new Set([...initialDocumentIdsRef.current, ...added])];
+      const merged = [...new Set([...initialDocumentIdsRef.current, ...added])];
+      initialDocumentIdsRef.current = merged;
+      try {
+        const raw = sessionStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const saved = JSON.parse(raw) as Record<string, unknown>;
+          saved.documentIds = merged;
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
+        }
+      } catch {
+        // 本地状态损坏时忽略，不影响本次恢复。
+      }
       setPendingInput(null);
       setResumeText('');
       setContinueWithoutEvidence(false);
@@ -455,6 +472,7 @@ export default function JdImport({
     setAnalysis(null);
     setError(null);
     setStreamNotice(null);
+    setStreamStage(null);
     setPendingInput(null);
     setResumeText('');
     setContinueWithoutEvidence(false);
@@ -707,6 +725,11 @@ export default function JdImport({
             </span>
           )}
         </div>
+        {running && streamStage && (
+          <p className="muted small" role="status">
+            当前阶段：{streamStage}
+          </p>
+        )}
         {running && elapsed * 1000 > POLL_TIMEOUT_MS && (
           <p className="muted small">
             等待时间较长，任务可能仍在排队或执行；可以检查 Worker 和依赖服务。

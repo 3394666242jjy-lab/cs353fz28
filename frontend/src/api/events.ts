@@ -5,6 +5,7 @@ export type ExecutionStreamErrorCode =
   | 'UNAUTHENTICATED'
   | 'RESOURCE_NOT_FOUND'
   | 'EVENT_HISTORY_EXPIRED'
+  | 'CURSOR_CONFLICT'
   | 'STREAM_UNAVAILABLE'
   | 'NETWORK'
   | 'INVALID_STREAM';
@@ -103,6 +104,15 @@ export function subscribeExecutionEvents(
       return;
     }
 
+    if (response.status === 400) {
+      fail(
+        new ExecutionStreamError(
+          '事件游标冲突或参数无效，请先读取任务快照再恢复。',
+          'CURSOR_CONFLICT',
+        ),
+      );
+      return;
+    }
     if (response.status === 401) {
       fail(new ExecutionStreamError('未登录或令牌失效，请重新登录。', 'UNAUTHENTICATED'));
       return;

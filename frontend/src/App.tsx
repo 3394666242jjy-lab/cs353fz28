@@ -117,6 +117,8 @@ export default function App() {
     sessionStorage.removeItem('careerpilot.owner');
     sessionStorage.removeItem(JOB_KEY);
     sessionStorage.removeItem(ANALYSIS_KEY);
+    sessionStorage.removeItem('careerpilot.plan_draft');
+    sessionStorage.removeItem('careerpilot.event_cursor');
     setDocumentIds([]);
     setHasRealAnalysis(false);
     setAnalysis(null);
