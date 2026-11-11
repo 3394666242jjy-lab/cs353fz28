@@ -560,7 +560,25 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <DocumentManager userId={user?.id} />
+            <DocumentManager
+              userId={user?.id}
+              onDeleted={(id) => {
+                setDocumentIds((prev) => prev.filter((item) => item !== id));
+                try {
+                  const selected = JSON.parse(
+                    sessionStorage.getItem('careerpilot.selected_documents') ?? '[]',
+                  );
+                  if (Array.isArray(selected)) {
+                    sessionStorage.setItem(
+                      'careerpilot.selected_documents',
+                      JSON.stringify(selected.filter((item) => item !== id)),
+                    );
+                  }
+                } catch {
+                  // 本地选择状态损坏时忽略；刷新时仍会与已就绪资料求交集。
+                }
+              }}
+            />
             <div className="footnote">
               原始资料、片段与结论分开保存。缺少证据时，系统应如实标记“资料未体现”。
             </div>

@@ -24,6 +24,8 @@ interface DocDetail extends DocItem {
 
 interface DocumentManagerProps {
   userId?: string;
+  /** 删除资料后通知父组件，避免后续分析继续引用已删除资料。 */
+  onDeleted?: (id: string) => void;
 }
 
 const statusLabels: Record<DocStatus, string> = {
@@ -81,7 +83,7 @@ function extractionText(data: {
   return data.extracted_text ?? '';
 }
 
-export default function DocumentManager({ userId }: DocumentManagerProps) {
+export default function DocumentManager({ userId, onDeleted }: DocumentManagerProps) {
   const [mode, setMode] = useState<Mode>(userId ? 'real' : 'sample');
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -259,6 +261,7 @@ export default function DocumentManager({ userId }: DocumentManagerProps) {
       setDocs((prev) =>
         prev.map((doc) => (doc.id === detail.id ? { ...doc, status: 'deleted' } : doc)),
       );
+      onDeleted?.(detail.id);
       setDetail(null);
       setSelectedId(null);
       setPendingDeleteId(null);
