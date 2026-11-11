@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { api } from '../api/client';
+import { useEffect, useRef, useState } from 'react';
+import { ApiError, api } from '../api/client';
 import { describeError } from '../api/errors';
 import { sampleAnalysis } from '../api/fixtures';
-import type { PlanResult, PlanTask } from '../api/m2-types';
+import type { PlanDraftTask, PlanResult } from '../api/m2-types';
 import StatusBadge from '../components/StatusBadge';
 
 interface PlanPanelProps {
@@ -14,6 +14,51 @@ interface PlanPanelProps {
 type Mode = 'real' | 'sample';
 
 const TZ_PRESETS = ['Asia/Shanghai', 'Asia/Tokyo', 'Europe/London', 'America/New_York', 'UTC'];
+const PLAN_KEY = 'careerpilot.plan_draft';
+
+interface SavedPlan {
+  planId?: string;
+  executionId?: string;
+  analysisId?: string;
+  deadline: string;
+  timezone: string;
+  dailyMinutes: number;
+}
+
+function readSavedPlan(): SavedPlan | null {
+  try {
+    const raw = sessionStorage.getItem(PLAN_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as Partial<SavedPlan> | null;
+    if (
+      !saved ||
+      typeof saved.deadline !== 'string' ||
+      typeof saved.timezone !== 'string' ||
+      typeof saved.dailyMinutes !== 'number' ||
+      (!saved.planId && !saved.executionId)
+    ) {
+      return null;
+    }
+    return {
+      planId: typeof saved.planId === 'string' ? saved.planId : undefined,
+      executionId: typeof saved.executionId === 'string' ? saved.executionId : undefined,
+      analysisId: typeof saved.analysisId === 'string' ? saved.analysisId : undefined,
+      deadline: saved.deadline,
+      timezone: saved.timezone,
+      dailyMinutes: saved.dailyMinutes,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSavedPlan(saved: SavedPlan | null) {
+  if (saved) {
+    sessionStorage.setItem(PLAN_KEY, JSON.stringify(saved));
+  } else {
+    sessionStorage.removeItem(PLAN_KEY);
+  }
+}
 
 function isoDate(offsetDays: number): string {
   const date = new Date();
@@ -23,8 +68,7 @@ function isoDate(offsetDays: number): string {
 
 function buildSamplePlan(deadline: string, timezone: string, dailyMinutes: number): PlanResult {
   const dates = [1, 3, 5, 7].map((offset) => isoDate(offset));
-  const tasks: PlanTask[] = sampleAnalysis.matches.map((match, index) => ({
-    id: `task_demo_${index + 1}`,
+  const draftTasks: PlanDraftTask[] = sampleAnalysis.matches.map((match, index) => ({
     title:
       match.status === 'not_evidenced'
         ? `补充「${match.requirement}」相关资料`
@@ -32,34 +76,113 @@ function buildSamplePlan(deadline: string, timezone: string, dailyMinutes: numbe
     requirement_ids: [match.requirement_id],
     scheduled_date: dates[index % dates.length],
     estimated_minutes: Math.min(90, Math.max(30, dailyMinutes)),
-    source_ids: match.evidence_refs.map((ref) => ref.chunk_id),
-    status: 'pending',
+    source_refs: match.evidence_refs.map((ref) => ({
+      document_id: ref.document_id,
+      version: ref.version,
+      chunk_id: ref.chunk_id,
+    })),
   }));
   return {
     id: 'plan_demo_001',
     analysis_id: 'analysis_demo_001',
+    execution_id: 'exec_demo_plan',
     status: 'draft',
     deadline,
     timezone,
     daily_minutes: dailyMinutes,
-    tasks,
-    draft_tasks: tasks,
+    draft_tasks: draftTasks,
+    tasks: null,
     warnings: ['样例计划：未调用后端，仅用于演示交互。'],
   };
 }
 
 export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: PlanPanelProps) {
-  const [mode, setMode] = useState<Mode>(analysisId ? 'real' : 'sample');
-  const [deadline, setDeadline] = useState(() => isoDate(14));
+  const [initialSaved] = useState(() => readSavedPlan());
+  const restoredRef = useRef(false);
+  const [mode, setMode] = useState<Mode>(analysisId || initialSaved ? 'real' : 'sample');
+  const [deadline, setDeadline] = useState(() => initialSaved?.deadline ?? isoDate(14));
   const [timezone, setTimezone] = useState(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
+    () =>
+      initialSaved?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'Asia/Shanghai',
   );
-  const [dailyMinutes, setDailyMinutes] = useState(60);
+  const [dailyMinutes, setDailyMinutes] = useState(initialSaved?.dailyMinutes ?? 60);
   const [draft, setDraft] = useState<PlanResult | null>(null);
   const [confirmed, setConfirmed] = useState<PlanResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!initialSaved || restoredRef.current) return;
+    restoredRef.current = true;
+    if (initialSaved.analysisId && analysisId && initialSaved.analysisId !== analysisId) {
+      writeSavedPlan(null);
+      return;
+    }
+    let active = true;
+    setMode('real');
+    setDeadline(initialSaved.deadline);
+    setTimezone(initialSaved.timezone);
+    setDailyMinutes(initialSaved.dailyMinutes);
+    setRestoring(true);
+    void (async () => {
+      try {
+        let planId = initialSaved.planId;
+        if (!planId && initialSaved.executionId) {
+          planId = await pollForPlan(initialSaved.executionId);
+        }
+        if (!planId) throw new Error('本地计划记录缺少计划或执行 ID。');
+        const response = await api.getPlan(planId);
+        if (!active) return;
+        setDraft(response.data);
+        if (response.data.status === 'confirmed') {
+          setConfirmed(response.data);
+          setNotice('已恢复此前确认的计划；正式任务不会重复创建。');
+        } else {
+          setNotice('已恢复上次未确认的计划草稿。');
+        }
+        persistPlan(response.data);
+      } catch (err) {
+        if (!active) return;
+        if (err instanceof ApiError && err.status === 404) {
+          writeSavedPlan(null);
+          setNotice('本地计划记录已失效，已清除。');
+        } else {
+          setError(`恢复上次计划失败：${describeError(err).message}`);
+        }
+      } finally {
+        if (active) setRestoring(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+    // 只在首次挂载恢复一次，避免重新生成草稿后被旧记录覆盖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'real' || !analysisId || !draft) return;
+    if (draft.analysis_id !== analysisId) {
+      setDraft(null);
+      setConfirmed(null);
+      setNotice(null);
+      setError(null);
+      writeSavedPlan(null);
+    }
+  }, [analysisId, draft, mode]);
+
+  function persistPlan(plan: PlanResult) {
+    writeSavedPlan({
+      planId: plan.id,
+      executionId: plan.execution_id,
+      analysisId: plan.analysis_id,
+      deadline: plan.deadline,
+      timezone: plan.timezone,
+      dailyMinutes: plan.daily_minutes,
+    });
+  }
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -73,8 +196,8 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
     if (!deadline) return '请选择目标日期。';
     if (deadline < isoDate(0)) return '目标日期不能早于今天。';
     if (!timezone.trim()) return '请填写时区，例如 Asia/Shanghai。';
-    if (!Number.isInteger(dailyMinutes) || dailyMinutes < 15 || dailyMinutes > 1440) {
-      return '每天可用时间需为 15–1440 分钟的整数。';
+    if (!Number.isInteger(dailyMinutes) || dailyMinutes < 1 || dailyMinutes > 1440) {
+      return '每天可用时间需为 1–1440 分钟的整数。';
     }
     return null;
   }
@@ -133,10 +256,19 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
         timezone: timezone.trim(),
         daily_minutes: dailyMinutes,
       });
-      const planId = await pollForPlan(accepted.data.execution_id);
+      const executionId = accepted.data.execution_id;
+      writeSavedPlan({
+        executionId,
+        analysisId,
+        deadline,
+        timezone: timezone.trim(),
+        dailyMinutes,
+      });
+      const planId = await pollForPlan(executionId);
       const plan = await api.getPlan(planId);
+      persistPlan(plan.data);
       setDraft(plan.data);
-      setNotice('计划草稿已生成。确认前不会创建正式任务。');
+      setNotice('计划草稿已生成。确认前不会创建正式任务；刷新页面可恢复此草稿。');
     } catch (err) {
       setError(describeError(err).message);
     } finally {
@@ -152,6 +284,16 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
         ...draft,
         status: 'confirmed',
         confirmed_at: new Date().toISOString(),
+        tasks: draft.draft_tasks.map((task, index) => ({
+          id: `task_demo_${index + 1}`,
+          plan_id: draft.id,
+          title: task.title,
+          requirement_ids: task.requirement_ids,
+          scheduled_date: task.scheduled_date,
+          estimated_minutes: task.estimated_minutes,
+          status: 'todo',
+          source_refs: task.source_refs,
+        })),
       };
       setDraft(next);
       setConfirmed(next);
@@ -164,12 +306,16 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
     setError(null);
     try {
       const response = await api.confirmPlan(draft.id);
-      setDraft(response.data.plan);
-      setConfirmed(response.data.plan);
+      const plan = response.data.plan;
+      persistPlan(plan);
+      setDraft(plan);
+      setConfirmed(plan);
       setNotice(
-        `计划已确认：${response.data.tasks.length} 个正式任务已保存。重复确认会返回同一结果。`,
+        `计划已确认：${plan.tasks?.length ?? 0} 个正式任务已保存。${
+          response.data.resumed ? ' Agent 已恢复执行。' : ''
+        } 重复确认会返回同一结果，不会重复创建。`,
       );
-      onConfirmed?.(response.data.plan);
+      onConfirmed?.(plan);
     } catch (err) {
       setError(describeError(err).message);
     } finally {
@@ -177,8 +323,26 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
     }
   }
 
-  const tasks = draft?.tasks ?? [];
   const isConfirmed = draft?.status === 'confirmed' || confirmed !== null;
+  const tasks = draft
+    ? isConfirmed
+      ? (draft.tasks ?? []).map((task) => ({
+          key: task.id,
+          title: task.title,
+          requirement_ids: task.requirement_ids,
+          scheduled_date: task.scheduled_date,
+          estimated_minutes: task.estimated_minutes,
+          status: task.status as string,
+        }))
+      : draft.draft_tasks.map((task, index) => ({
+          key: `draft-${index}`,
+          title: task.title,
+          requirement_ids: task.requirement_ids,
+          scheduled_date: task.scheduled_date,
+          estimated_minutes: task.estimated_minutes,
+          status: '',
+        }))
+    : [];
 
   return (
     <section className="plan-panel" aria-labelledby="plan-title">
@@ -255,12 +419,13 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
           type="button"
           className="primary-button"
           onClick={() => void generatePlan()}
-          disabled={busy}
+          disabled={busy || restoring || isConfirmed}
         >
-          {busy ? '生成中…' : draft ? '重新生成草稿' : '生成计划草稿'}
+          {busy ? '生成中…' : isConfirmed ? '已确认' : draft ? '重新生成草稿' : '生成计划草稿'}
         </button>
       </div>
 
+      {restoring && <p className="small muted">正在恢复上次的计划…</p>}
       {error && (
         <div className="error-box" role="alert">
           {error}
@@ -298,13 +463,14 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
 
           <ul className="plan-task-list">
             {tasks.map((task) => (
-              <li key={task.id} className="plan-task">
+              <li key={task.key} className="plan-task">
                 <div className="plan-task-main">
                   <span className="plan-task-date">{task.scheduled_date}</span>
                   <span className="plan-task-title">{task.title}</span>
                 </div>
                 <span className="small muted">
                   {task.estimated_minutes} 分钟 · 关联 {task.requirement_ids.length} 项要求
+                  {task.status ? ` · ${task.status}` : ''}
                 </span>
               </li>
             ))}
@@ -326,7 +492,7 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
                 >
                   {busy ? '确认中…' : '确认计划并创建任务'}
                 </button>
-                <span className="small muted">确认前不会创建正式任务。</span>
+                <span className="small muted">确认前不会创建正式任务；刷新页面可恢复此草稿。</span>
               </>
             )}
           </div>

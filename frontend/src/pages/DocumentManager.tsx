@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { describeError, isAbortError } from '../api/errors';
 import { sampleInputs } from '../api/fixtures';
+import type { DocumentExtraction } from '../api/m2-types';
 import StatusBadge from '../components/StatusBadge';
 
 type Kind = 'resume' | 'project';
@@ -66,6 +67,18 @@ const SAMPLE_TEXTS: Record<string, string> = {
 function extOf(filename: string): string {
   const index = filename.lastIndexOf('.');
   return index >= 0 ? filename.slice(index + 1).toUpperCase() : 'FILE';
+}
+
+function extractionText(data: {
+  extraction?: DocumentExtraction | null;
+  extracted_text?: string | null;
+}): string {
+  const extraction = data.extraction;
+  if (extraction?.kind === 'text') return extraction.text ?? '';
+  if (extraction?.pages?.length) {
+    return extraction.pages.map((page) => `[第 ${page.page} 页]\n${page.text}`).join('\n\n');
+  }
+  return data.extracted_text ?? '';
 }
 
 export default function DocumentManager({ userId }: DocumentManagerProps) {
@@ -152,7 +165,7 @@ export default function DocumentManager({ userId }: DocumentManagerProps) {
     try {
       const response = await api.getDocument(doc.id);
       const data = response.data;
-      const text = data.extracted_text ?? '';
+      const text = extractionText(data);
       setDetail({
         id: data.id,
         kind: data.kind,

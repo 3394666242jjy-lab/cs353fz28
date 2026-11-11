@@ -12,6 +12,7 @@ import PlanPanel from './pages/PlanPanel';
 
 const steps = ['资料准备', '目标岗位', '匹配分析', '准备计划'];
 const JOB_KEY = 'careerpilot.job';
+const ANALYSIS_KEY = 'careerpilot.analysis';
 type Connection = 'checking' | 'connected' | 'disconnected';
 
 function readSelectedReadyDocuments(): string[] {
@@ -73,6 +74,18 @@ function readSavedJob(): JobVersionInfo | null {
   }
 }
 
+function readSavedAnalysis(): AnalysisResult | null {
+  try {
+    const raw = sessionStorage.getItem(ANALYSIS_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as AnalysisResult | null;
+    if (!saved || typeof saved.id !== 'string' || !Array.isArray(saved.matches)) return null;
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [step, setStep] = useState(0);
   const [connection, setConnection] = useState<Connection>('checking');
@@ -81,8 +94,9 @@ export default function App() {
   const [probeMessage, setProbeMessage] = useState('');
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
-  const [hasRealAnalysis, setHasRealAnalysis] = useState(false);
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [initialAnalysis] = useState(() => readSavedAnalysis());
+  const [hasRealAnalysis, setHasRealAnalysis] = useState(initialAnalysis !== null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(initialAnalysis);
   const [analysisStale, setAnalysisStale] = useState(false);
   const [job, setJob] = useState<JobVersionInfo | null>(() => readSavedJob());
   const [jobBusy, setJobBusy] = useState(false);
@@ -102,6 +116,7 @@ export default function App() {
     sessionStorage.removeItem('careerpilot.pending_analysis');
     sessionStorage.removeItem('careerpilot.owner');
     sessionStorage.removeItem(JOB_KEY);
+    sessionStorage.removeItem(ANALYSIS_KEY);
     setDocumentIds([]);
     setHasRealAnalysis(false);
     setAnalysis(null);
@@ -673,11 +688,17 @@ export default function App() {
                 setJobNotice(null);
               }}
               onAnalysis={(result) => {
+                if (result) {
+                  sessionStorage.setItem(ANALYSIS_KEY, JSON.stringify(result));
+                } else {
+                  sessionStorage.removeItem(ANALYSIS_KEY);
+                }
                 setAnalysis(result);
                 setHasRealAnalysis(result !== null);
                 setAnalysisStale(false);
                 if (result) setAnalysisVisible(false);
               }}
+              onGoToPlan={() => setStep(3)}
             />
           )}
         </div>

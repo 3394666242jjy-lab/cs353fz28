@@ -1,11 +1,13 @@
 import type { components } from './schema';
 import type {
   DocumentDeleteAccepted,
+  DocumentExtraction,
   DocumentTextUpdate,
   DocumentUpdateAccepted,
   PlanConfirmResult,
   PlanCreateRequest,
   PlanResult,
+  ResumeRequest,
 } from './m2-types';
 
 type Envelope<T> = { data: T; request_id: string };
@@ -23,7 +25,11 @@ type Evidence = components['schemas']['Evidence'];
 type DocumentAccepted = components['schemas']['DocumentAccepted'];
 type DocumentResult = components['schemas']['DocumentResult'];
 type DocumentPage = components['schemas']['DocumentPage'];
-type DocumentDetail = DocumentResult & { extracted_text?: string | null };
+type DocumentDetail = DocumentResult & {
+  extraction?: DocumentExtraction | null;
+  /** 兼容旧快照字段；新后端使用 extraction。 */
+  extracted_text?: string | null;
+};
 type JobResult = components['schemas']['JobResult'];
 type LoginRequest = components['schemas']['LoginRequest'];
 type TokenResult = components['schemas']['TokenResult'];
@@ -164,11 +170,7 @@ export const api = {
     request<PlanConfirmResult>('POST', `/api/v1/plans/${encodeURIComponent(id)}/confirm`, {
       signal,
     }),
-  resumeExecution: (
-    id: string,
-    body: { interrupt_id: string; checkpoint_id: string; answer: unknown },
-    signal?: AbortSignal,
-  ) =>
+  resumeExecution: (id: string, body: ResumeRequest, signal?: AbortSignal) =>
     request<ExecutionAccepted>('POST', `/api/v1/executions/${encodeURIComponent(id)}/resume`, {
       body,
       signal,
