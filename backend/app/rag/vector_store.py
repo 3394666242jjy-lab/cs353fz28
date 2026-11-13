@@ -136,6 +136,15 @@ class VectorStore(Protocol):
         """写入尚不存在的文档版本；已有向量时拒绝覆盖。"""
         ...
 
+    async def delete_document_points(
+        self,
+        *,
+        user_id: str,
+        document_id: str,
+    ) -> None:
+        """物理删除一个资料的全部向量点；重复调用幂等（删除契约见 issue #24/#25）。"""
+        ...
+
     async def search(
         self,
         *,
@@ -337,6 +346,35 @@ class QdrantVectorStore:
         if existing:
             raise VectorStoreError("文档版本已有向量；请创建新版本，不能原地重建", retryable=False)
         await self.upsert_chunks(points)
+
+    async def delete_document_points(
+        self,
+        *,
+        user_id: str,
+        document_id: str,
+    ) -> None:
+        """物理删除一个资料的全部向量点（M2 删除契约，issue #24/#25）。
+
+        过滤条件永远同时携带 user_id 与 document_id，与个人语料的属主隔离
+        保持一致；按过滤删除本身幂等，副本清理失败可安全重试。
+        """
+        body = {
+            "filter": {
+                "must": [
+                    {"key": "user_id", "match": {"value": user_id}},
+                    {"key": "document_id", "match": {"value": document_id}},
+                ]
+            },
+            "wait": True,
+        }
+        response = await self._send(
+            "POST", f"/collections/{self._collection}/points/delete", json_body=body
+        )
+        if response.status_code == 404:
+            # 集合尚不存在时没有任何可删除的向量，视为已清理。
+            return
+        if response.status_code != 200:
+            raise self._status_error(response)
 
     async def search(
         self,

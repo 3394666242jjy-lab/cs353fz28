@@ -30,6 +30,8 @@ class AgentSettings(BaseSettings):
     retry_delay_seconds: float = Field(default=0.25, ge=0, le=2)
     max_requirements: int = Field(default=8, ge=1, le=8)
     max_tool_calls: int = Field(default=8, ge=1, le=8)
+    max_cumulative_model_requests: int = Field(default=12, ge=1, le=64)
+    max_clarification_rounds: int = Field(default=3, ge=1, le=10)
     top_k: int = Field(default=5, ge=1, le=10)
     max_output_tokens: int = Field(default=4096, ge=128, le=8192)
     max_evidence_chars: int = Field(default=80000, ge=1, le=200000)

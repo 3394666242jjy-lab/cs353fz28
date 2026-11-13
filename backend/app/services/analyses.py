@@ -88,7 +88,12 @@ def requirement_snapshot_from_matches(matches: list[Match]) -> list[dict[str, An
 
 
 def save_analysis_result(
-    settings: Settings, user_id: str, analysis_id: str, result: AnalysisResult
+    settings: Settings,
+    user_id: str,
+    analysis_id: str,
+    result: AnalysisResult,
+    *,
+    expected_document_versions: list[dict] | None = None,
 ) -> bool:
     """Persist a validated AnalysisResult and flip the record to ready."""
     result = AnalysisResult.model_validate(result)
@@ -101,10 +106,13 @@ def save_analysis_result(
                 "status": STATUS_PENDING,
                 "job_id": result.job_id,
                 "job_version": result.job_version,
-                "document_versions": [item.model_dump() for item in result.document_versions],
+                "document_versions": expected_document_versions
+                if expected_document_versions is not None
+                else [item.model_dump() for item in result.document_versions],
             },
             {
                 "$set": {
+                    "document_versions": [item.model_dump() for item in result.document_versions],
                     "requirement_snapshot": requirement_snapshot_from_matches(result.matches),
                     "matches": [match.model_dump() for match in result.matches],
                     "warnings": result.warnings,

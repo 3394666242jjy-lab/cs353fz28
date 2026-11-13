@@ -31,6 +31,13 @@ class Settings(BaseSettings):
     execution_lease_seconds: int = Field(default=300, ge=60, le=86400)
     execution_queue_timeout_seconds: int = Field(default=3600, ge=60, le=86400)
 
+    # 执行事件与 SSE（M2，dev/03/dev/04）：每个执行最多保留的事件条数，超出后
+    # 旧游标作废（SSE 返回 410 EVENT_HISTORY_EXPIRED，客户端改读任务快照）；
+    # 轮询间隔与心跳间隔控制 SSE 推送节奏，心跳只发注释行、不落库。
+    event_history_retention_count: int = Field(default=200, ge=1, le=10000)
+    sse_poll_interval_seconds: float = Field(default=1.5, ge=0.2, le=30.0)
+    sse_heartbeat_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+
     # 向量库（Qdrant，成员 C）：地址、凭据、集合名与调用参数。
     # 在线集群填 HTTPS 地址与 API Key；本地 compose 用 http://127.0.0.1:6333
     # 且 Key 留空（不发鉴权头），两种形态切换只改这两项。
