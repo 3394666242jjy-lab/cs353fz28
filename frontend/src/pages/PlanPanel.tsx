@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApiError, api } from '../api/client';
 import { describeError } from '../api/errors';
 import { sampleAnalysis } from '../api/fixtures';
@@ -98,7 +98,6 @@ function buildSamplePlan(deadline: string, timezone: string, dailyMinutes: numbe
 
 export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: PlanPanelProps) {
   const [initialSaved] = useState(() => readSavedPlan());
-  const restoredRef = useRef(false);
   const [mode, setMode] = useState<Mode>(analysisId || initialSaved ? 'real' : 'sample');
   const [deadline, setDeadline] = useState(() => initialSaved?.deadline ?? isoDate(14));
   const [timezone, setTimezone] = useState(
@@ -114,8 +113,7 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!initialSaved || restoredRef.current) return;
-    restoredRef.current = true;
+    if (!initialSaved) return;
     if (initialSaved.analysisId && analysisId && initialSaved.analysisId !== analysisId) {
       writeSavedPlan(null);
       return;

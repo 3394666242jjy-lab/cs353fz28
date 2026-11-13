@@ -1,0 +1,15 @@
+{
+  "date": "2026-11-13",
+  "environment": "real localhost API/Celery/MongoDB replica set/Redis/Qdrant and DashScope models",
+  "synthetic_only": true,
+  "findings": [
+    {"check": "资料提取文本预览、保存 v2、自动等待索引就绪", "pass": true},
+    {"check": "JD 创建 v1、PATCH 保存 v2、使用新版本真实分析", "pass": true},
+    {"check": "真实分析经 SSE 完成并显示原文支持的两项结论", "pass": true},
+    {"check": "刷新后真实分析结果恢复，可生成真实计划", "pass": true},
+    {"check": "草稿刷新恢复，StrictMode 下不再永久停留在正在恢复", "pass": true},
+    {"check": "明确确认后 3 个正式任务保存，禁用重复确认按钮", "pass": true},
+    {"check": "退出清除会话，第二账号没有第一账号资料和计划", "pass": true}
+  ],
+  "screenshot": "2026-11-13-m2-plan-confirmed.png"
+}

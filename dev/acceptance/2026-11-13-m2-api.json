@@ -1,0 +1,121 @@
+{
+  "date": "2026-11-13",
+  "synthetic_only": true,
+  "findings": [
+    {
+      "check": "两个隔离账号",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "真实 PDF 入库",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "证据不足时暂停",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "调用方执行 Worker 重启",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "自由文本不充当证据且重复回答幂等",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "补充真实资料后分析完成",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "引用可查回原文",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "引用可查回原文",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "第二账号不能读取分析",
+      "pass": true,
+      "detail": "HTTP 404; expected 404"
+    },
+    {
+      "check": "确认前没有正式任务",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "重复确认不重复创建任务",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "计划恢复成功",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "第二账号不能读取计划",
+      "pass": true,
+      "detail": "HTTP 404; expected 404"
+    },
+    {
+      "check": "SSE 拒绝匿名读取",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "SSE 隔离其他账号",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "SSE 真实回放并在终态关闭",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "SSE 事件不重复",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "SSE Last-Event-ID 续传",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "SSE 过期游标返回 410",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "SSE 可回退权威快照",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "来源更新后拒绝确认旧草稿",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "新分析确实进入追问",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "check": "来源删除后拒绝恢复",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

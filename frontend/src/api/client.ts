@@ -159,7 +159,7 @@ export const api = {
     request<JobResult>('GET', `/api/v1/jobs/${encodeURIComponent(id)}`, { signal }),
   patchJob: (
     id: string,
-    body: { raw_jd?: string; requirements?: unknown; expected_version: number },
+    body: { raw_jd: string; expected_version: number },
     signal?: AbortSignal,
   ) => request<JobResult>('PATCH', `/api/v1/jobs/${encodeURIComponent(id)}`, { body, signal }),
   createPlan: (body: PlanCreateRequest, signal?: AbortSignal) =>

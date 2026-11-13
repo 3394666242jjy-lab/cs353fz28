@@ -35,6 +35,7 @@ class QueryResult:
     total_ms: float
     embedding_ms: float
     search_ms: float
+    deletion_verified: bool = False
 
     @property
     def is_answerable(self) -> bool:
@@ -118,7 +119,7 @@ def summarize(results: Sequence[QueryResult], ks: Sequence[int] = KS) -> dict:
             continue
         entry = {"count": len(group), "violations": sum(is_violation(r) for r in group)}
         entry["rate"] = entry["violations"] / entry["count"]
-        if kind in PENDING_KINDS:
+        if kind in PENDING_KINDS and not all(r.deletion_verified for r in group):
             # 清理链路未落地时无从构造"点已被物理删除"的场景，只记录不判定。
             entry["pending"] = True
         negative_block[kind] = entry

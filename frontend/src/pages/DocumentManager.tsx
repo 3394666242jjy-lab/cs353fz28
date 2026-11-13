@@ -26,6 +26,7 @@ interface DocumentManagerProps {
   userId?: string;
   /** 删除资料后通知父组件，避免后续分析继续引用已删除资料。 */
   onDeleted?: (id: string) => void;
+  onUpdated?: (id: string) => void;
 }
 
 const statusLabels: Record<DocStatus, string> = {
@@ -83,7 +84,7 @@ function extractionText(data: {
   return data.extracted_text ?? '';
 }
 
-export default function DocumentManager({ userId, onDeleted }: DocumentManagerProps) {
+export default function DocumentManager({ userId, onDeleted, onUpdated }: DocumentManagerProps) {
   const [mode, setMode] = useState<Mode>(userId ? 'real' : 'sample');
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -94,6 +95,55 @@ export default function DocumentManager({ userId, onDeleted }: DocumentManagerPr
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [pendingIndex, setPendingIndex] = useState<{
+    id: string;
+    executionId: string;
+    version: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!pendingIndex || !userId || mode !== 'real') return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    async function poll() {
+      try {
+        const { data: execution } = await api.getExecution(
+          pendingIndex!.executionId,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        if (execution.status === 'failed' || execution.status === 'succeeded') {
+          const { data: doc } = await api.getDocument(pendingIndex!.id, controller.signal);
+          if (controller.signal.aborted) return;
+          const update = { version: doc.current_version, status: doc.status, error: doc.error };
+          setDocs((prev) =>
+            prev.map((item) => (item.id === doc.id ? { ...item, ...update } : item)),
+          );
+          setDetail((prev) =>
+            prev?.id === doc.id ? { ...prev, ...update, extractedText: extractionText(doc) } : prev,
+          );
+          if (execution.status === 'failed')
+            setError(execution.error?.message ?? '新版本索引失败，已保留原版本。');
+          else {
+            setNotice(`新版本 v${doc.current_version} 已就绪；旧分析需要重新生成。`);
+            onUpdated?.(doc.id);
+          }
+          setPendingIndex(null);
+          return;
+        }
+        timer = window.setTimeout(() => void poll(), 1500);
+      } catch (err) {
+        if (isAbortError(err) || controller.signal.aborted) return;
+        setError(`查询索引进度失败：${describeError(err).message}`);
+        timer = window.setTimeout(() => void poll(), 3000);
+      }
+    }
+    void poll();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [pendingIndex, userId, mode]);
 
   useEffect(() => {
     if (userId) setMode('real');
@@ -105,6 +155,7 @@ export default function DocumentManager({ userId, onDeleted }: DocumentManagerPr
     setSelectedId(null);
     setDetail(null);
     setPendingDeleteId(null);
+    setPendingIndex(null);
 
     if (mode === 'sample') {
       setDocs(SAMPLE_DOCS);
@@ -226,6 +277,11 @@ export default function DocumentManager({ userId, onDeleted }: DocumentManagerPr
         expected_version: detail.version,
       });
       const nextVersion = response.data.version;
+      setPendingIndex({
+        id: detail.id,
+        executionId: response.data.execution_id,
+        version: nextVersion,
+      });
       setDetail({ ...detail, version: nextVersion, status: 'processing', extractedText: editText });
       setDocs((prev) =>
         prev.map((doc) =>

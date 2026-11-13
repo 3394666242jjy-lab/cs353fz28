@@ -13,12 +13,11 @@
 | citation_precision_at_3 | 0.3333 |
 | citation_precision_at_5 | 0.2000 |
 
-耗时（ms）：P50 5445.5，P95 7910.7，平均 embedding 585.6 / 检索 2645.5
-（耗时为云端 Qdrant（careerpilot_eval 所在集群）实测值，含公网往返，不代表本地部署开销）
+耗时（ms）：P50 634.1，P95 938.3，平均 embedding 329.8 / 检索 81.4
 
 | 负例类别 | 数量 | 违规 | 违规率 |
 | --- | --- | --- | --- |
 | no_evidence | 6 | 6 | 100.00% |
 | cross_user | 3 | 0 | 0.00% |
 | old_version | 3 | 0 | 0.00% |
-| deleted | 3 | 3 | 未判定（待清理链路） |
+| deleted | 3 | 0 | 0.00% |

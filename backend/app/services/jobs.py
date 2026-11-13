@@ -3,8 +3,10 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from pymongo import ReturnDocument
+
 from app.config import Settings
-from app.schemas.resources import JobCreate, JobCreated, JobResult
+from app.schemas.resources import JobCreate, JobCreated, JobResult, JobUpdate
 from app.services.database import database_connection
 
 
@@ -39,4 +41,30 @@ def load_job(settings: Settings, user_id: str, job_id: str) -> JobResult | None:
         company=document.get("company"),
         raw_jd=document["raw_jd"],
         version=document["version"],
+    )
+
+
+def update_job(
+    settings: Settings, user_id: str, job_id: str, payload: JobUpdate
+) -> JobResult | None:
+    """Compare-and-swap the JD; snapshots retain the original version and text."""
+    with database_connection(settings) as database:
+        document = database.jobs.find_one_and_update(
+            {"id": job_id, "user_id": user_id, "version": payload.expected_version},
+            {
+                "$set": {
+                    "raw_jd": payload.raw_jd,
+                    "requirements": [],
+                    "updated_at": datetime.now(UTC),
+                },
+                "$inc": {"version": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+    return (
+        JobResult.model_validate(
+            {key: document.get(key) for key in ("id", "title", "company", "raw_jd", "version")}
+        )
+        if document
+        else None
     )

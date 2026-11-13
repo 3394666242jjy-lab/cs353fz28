@@ -132,6 +132,15 @@ async def index_document(
         embedding_model=embedder.model_version,
         embedding_dimension=embedder.dimension,
     )
+    if sparse_encoder is not None:
+        import hashlib
+        import json
+        from dataclasses import asdict
+
+        profile = hashlib.sha256(
+            json.dumps(asdict(sparse_encoder), sort_keys=True).encode()
+        ).hexdigest()[:16]
+        index_version += f"/sparse-{profile}"
     points = [
         ChunkPoint(
             chunk_id=make_chunk_id(document_id, version, ordinal),

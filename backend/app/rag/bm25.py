@@ -35,6 +35,15 @@ CJK_RUN = re.compile(r"[\u4e00-\u9fff]+")
 DEFAULT_K1 = 1.2
 DEFAULT_B = 0.75
 
+# Application profile: fixed weights avoid leaking corpus statistics across users.
+# Experiments can still inject a fitted profile explicitly. Changing this profile
+# requires new document versions in a new collection, like changing embeddings.
+APPLICATION_PROFILE = "keyword-fixed-v1"
+
+
+def application_encoder() -> "Bm25Encoder":
+    return Bm25Encoder(avg_doc_len=100.0)
+
 
 @dataclass(frozen=True)
 class SparseVector:

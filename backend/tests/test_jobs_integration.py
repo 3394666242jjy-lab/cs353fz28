@@ -64,6 +64,24 @@ def test_real_jd_round_trip_and_user_isolation():
                 ).status_code
                 == 422
             )
+            update = {"expected_version": 1, "raw_jd": "  新岗位文本\nPython Redis\n"}
+            assert client.patch(f"/api/v1/jobs/{job_id}", json=update).status_code == 401
+            assert (
+                client.patch(f"/api/v1/jobs/{job_id}", json=update, headers=headers[1]).status_code
+                == 404
+            )
+            edited = client.patch(f"/api/v1/jobs/{job_id}", json=update, headers=headers[0])
+            assert edited.status_code == 200
+            assert edited.json()["data"]["version"] == 2
+            assert edited.json()["data"]["raw_jd"] == update["raw_jd"]
+            assert (
+                client.patch(f"/api/v1/jobs/{job_id}", json=update, headers=headers[0]).status_code
+                == 409
+            )
+            assert (
+                client.get(f"/api/v1/jobs/{job_id}", headers=headers[0]).json()["data"]["version"]
+                == 2
+            )
         finally:
             # Clean only this run's synthetic users and resources in the dedicated test database.
             for user_id in user_ids:

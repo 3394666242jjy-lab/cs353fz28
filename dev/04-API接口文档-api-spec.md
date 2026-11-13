@@ -1,6 +1,8 @@
 # CareerPilot API 接口文档
 
-状态：v0.5 M2 实施版。M1 路由、Pydantic 模型与 OpenAPI 已建立并接入；M2 的资料版本更新/软删除/重建、鉴权 SSE（序列回放、410 游标过期）、幂等恢复与计划草稿/确认接口已由 B 实现（Issue #24）；D 的图恢复与 C 的检索增强在各自任务内联调。运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)，可靠性与恢复语义见 [12 说明](12-M2后端任务可靠性与恢复-backend-reliability.md)。
+状态：v0.6 M2 集成版。资料版本/软删除、JD 版本编辑、鉴权 SSE、幂等恢复与计划草稿/确认已接通；D 的暂停点恢复及 C 的三档检索完成真实联调。证据及边界见 [M2 集成验收](15-M2集成验收-m2-completion.md)，运行方法见 [09 本地启动指南](09-本地开发启动-local-setup.md)，可靠性与恢复语义见 [12 说明](12-M2后端任务可靠性与恢复-backend-reliability.md)。
+
+`PATCH /api/v1/jobs/{job_id}` 请求为 `{ "expected_version": 1, "raw_jd": "完整修订后的岗位文本" }`，返回标准 Envelope 中的 JobResult（新版本号）。仅归属用户可编辑；匿名 401、不存在或他人岗位 404、并发版本冲突 409 VERSION_CONFLICT、空白/超长文本 422。标题/公司保持创建时内容，分析保留原岗位快照并在岗位变化后显示 stale。运行契约以生成的 OpenAPI 为准。
 
 ## M1 必要接口与响应字段
 

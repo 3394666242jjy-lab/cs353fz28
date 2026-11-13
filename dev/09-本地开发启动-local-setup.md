@@ -37,7 +37,7 @@ docker compose up -d
 docker compose ps
 ```
 
-默认本机端口：MongoDB 27017、Redis 6379、Qdrant 6333。Compose 仅绑定 127.0.0.1，持久化在命名数据卷；这份文件不用于生产环境。本地 MongoDB 是单节点开发实例，M2 计划事务须改用可支持事务的副本集配置或托管实例。
+默认本机端口：MongoDB 27017、Redis 6379、Qdrant 6333。Compose 仅绑定 127.0.0.1，持久化在命名数据卷；这份文件不用于生产环境。当前 Compose 已配置单节点副本集 rs0，健康检查负责初始化；M2 计划确认/恢复事务必须使用副本集或支持事务的托管实例。旧容器需重新创建并等待健康检查，不要删除原数据卷。
 
 如端口被占用，修改 .env 的 MONGO_HOST_PORT、REDIS_HOST_PORT、QDRANT_HOST_PORT，同时修改 MONGODB_URI、CELERY_BROKER_URL、VECTOR_STORE_URL 对应地址。检查连接无需调用模型。
 

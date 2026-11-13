@@ -119,6 +119,18 @@ class JobCreated(ContractModel):
     version: int = Field(ge=1)
 
 
+class JobUpdate(ContractModel):
+    expected_version: int = Field(ge=1)
+    raw_jd: Annotated[str, StringConstraints(strip_whitespace=False)] = Field(
+        min_length=1, max_length=30000
+    )
+
+    @field_validator("raw_jd")
+    @classmethod
+    def reject_blank_jd(cls, value: str) -> str:
+        return JobCreate.reject_blank_jd(value)
+
+
 class JobResult(JobCreate):
     id: str
     version: int = Field(ge=1)

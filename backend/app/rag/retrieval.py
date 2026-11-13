@@ -322,6 +322,19 @@ class QdrantEvidenceSource:
             top_k=top_k,
         )
         candidates = fused[: max(top_k, self._settings.hybrid_candidates_per_channel)]
+        if not candidates:
+            return (
+                [],
+                build_retrieval_config_version(
+                    strategy="hybrid_rerank",
+                    model_version=self._embedder.model_version,
+                    dimension=self._embedder.dimension,
+                    top_k=top_k,
+                    sparse_weight=self._settings.hybrid_sparse_weight,
+                    rerank_model=self._rerank.model_version,
+                ),
+                [],
+            )
         texts = await self._text_resolver([hit.chunk_id for hit in candidates])
         scored_pool = [hit for hit in candidates if texts.get(hit.chunk_id)]
         warnings: list[str] = []

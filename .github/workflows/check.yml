@@ -78,5 +78,6 @@ jobs:
       - name: Typecheck and build
         working-directory: frontend
         run: |
+          node ../scripts/test_frontend_events.mjs
           npm run format:check
           npm run build

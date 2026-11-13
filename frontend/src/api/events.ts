@@ -114,6 +114,7 @@ export function subscribeExecutionEvents(
       return;
     }
     if (response.status === 401) {
+      window.dispatchEvent(new Event('careerpilot:session-expired'));
       fail(new ExecutionStreamError('未登录或令牌失效，请重新登录。', 'UNAUTHENTICATED'));
       return;
     }
@@ -143,8 +144,11 @@ export function subscribeExecutionEvents(
       scheduleReconnect();
       return;
     }
+    if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+      fail(new ExecutionStreamError('服务端返回了无效事件流。', 'INVALID_STREAM'));
+      return;
+    }
 
-    retries = 0;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -154,6 +158,7 @@ export function subscribeExecutionEvents(
         const { value, done } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
+        buffer = buffer.replace(/\r\n/g, '\n');
 
         let boundary = buffer.indexOf('\n\n');
         while (boundary >= 0) {
@@ -163,6 +168,7 @@ export function subscribeExecutionEvents(
 
           const event = parseEventBlock(raw);
           if (!event) continue;
+          retries = 0;
           if (event.id) {
             if (seen.has(event.id)) continue;
             seen.add(event.id);

@@ -562,7 +562,9 @@ def test_mongo_evidence_retriever_fills_candidates_from_chunks(monkeypatch):
     monkeypatch.setattr(
         worker,
         "get_document",
-        lambda settings, user_id, document_id: SimpleNamespace(filename="resume.pdf"),
+        lambda settings, user_id, document_id: SimpleNamespace(
+            filename="resume.pdf", current_version=1, status="ready"
+        ),
     )
     retriever = worker._MongoEvidenceRetriever(Settings(_env_file=None, app_env="test"), Source())
 
