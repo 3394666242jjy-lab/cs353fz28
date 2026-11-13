@@ -232,16 +232,16 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-note">
-          <p className="eyebrow">M1 / 开发骨架</p>
+          <p className="eyebrow">M2 / 本地开发</p>
           <p>先整理资料，再用证据理解岗位要求。</p>
-          <span>计划与面试功能将在后续阶段接入。</span>
+          <span>分析后可生成准备计划，检查草稿后再确认保存。</span>
         </div>
         <div className="connection-block">
           <StatusBadge
             label={connectionLabel}
             tone={connection === 'connected' ? 'success' : 'neutral'}
           />
-          <p>连接状态仅代表基础 API 可用，业务功能仍待接入。</p>
+          <p>可继续检查资料处理和分析所需的服务。</p>
           <a href={api.docsUrl} target="_blank" rel="noreferrer">
             打开 API 文档 <span aria-hidden="true">↗</span>
           </a>
@@ -472,6 +472,7 @@ export default function App() {
           {(!hasAuthToken() || user) && (
             <JdImport
               key={user?.id ?? 'anonymous'}
+              userId={user?.id}
               jd={jd}
               title={title}
               documentIds={documentIds}

@@ -1,0 +1,38 @@
+[
+  {
+    "name": "old_checkpoint_replay_rejected",
+    "passed": true
+  },
+  {
+    "name": "different_answer_replay_rejected",
+    "passed": true
+  },
+  {
+    "name": "other_user_resume_rejected",
+    "passed": true
+  },
+  {
+    "name": "numeric_continue_not_accepted",
+    "passed": true
+  },
+  {
+    "name": "changed_source_blocks_plan_confirmation",
+    "passed": true
+  },
+  {
+    "name": "rejected_confirmation_creates_no_tasks",
+    "passed": true
+  },
+  {
+    "name": "changed_source_marks_old_analysis_stale",
+    "passed": true
+  },
+  {
+    "name": "deleted_source_blocks_valid_resume",
+    "passed": true
+  },
+  {
+    "name": "deletion_erases_agent_snapshot_text",
+    "passed": true
+  }
+]
