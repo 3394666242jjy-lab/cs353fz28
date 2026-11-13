@@ -121,6 +121,7 @@ class M2Audit(Audit):
         self.check("重复确认不重复创建任务", first["plan"]["tasks"] == again["plan"]["tasks"])
         self.check("计划恢复成功", self.wait_execution(token, pe)["status"] == "succeeded")
         self.expect_denied("第二账号不能读取计划", other, f"/plans/{plan_id}")
+        self.check_events(token, other, execution)
         return {
             "token": token,
             "other": other,
@@ -129,6 +130,40 @@ class M2Audit(Audit):
             "job_id": job["job_id"],
             "execution_id": execution,
         }
+
+    def check_events(self, token, other, execution_id):
+        path = f"/executions/{execution_id}/events"
+        headers = {"Authorization": f"Bearer {token}"}
+        self.check("SSE 拒绝匿名读取", self.client.get(path).status_code == 401)
+        self.check(
+            "SSE 隔离其他账号",
+            self.client.get(path, headers={"Authorization": f"Bearer {other}"}).status_code == 404,
+        )
+        response = self.client.get(path, headers=headers)
+        self.check(
+            "SSE 真实回放并在终态关闭",
+            response.status_code == 200
+            and "text/event-stream" in response.headers.get("content-type", "")
+            and "event: completed" in response.text,
+        )
+        ids = [line[4:] for line in response.text.splitlines() if line.startswith("id: ")]
+        self.check("SSE 事件不重复", bool(ids) and len(ids) == len(set(ids)))
+        replay = self.client.get(path, headers={**headers, "Last-Event-ID": ids[0]})
+        self.check(
+            "SSE Last-Event-ID 续传",
+            replay.status_code == 200
+            and f"id: {ids[0]}\n" not in replay.text
+            and "event: completed" in replay.text,
+        )
+        expired = self.client.get(
+            path, headers=headers, params={"after_event_id": "ev_expired_synthetic"}
+        )
+        self.check("SSE 过期游标返回 410", expired.status_code == 410)
+        snapshot = self.request("GET", f"/executions/{execution_id}", token=token)
+        self.check(
+            "SSE 可回退权威快照",
+            snapshot["status"] == "succeeded" and bool(snapshot["latest_event_id"]),
+        )
 
     def check_lifecycle(self, context):
         """仅对本次新建的合成资料执行更新和删除。"""
