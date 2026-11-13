@@ -1,13 +1,18 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ApiError, api, hasAuthToken, setAuthToken, type UserResult } from './api/client';
 import { describeError } from './api/errors';
-import { sampleInputs } from './api/fixtures';
+import { sampleInputs, type AnalysisResult } from './api/fixtures';
+import JdVersionBar, { type JobNotice, type JobVersionInfo } from './components/JdVersionBar';
 import StatusBadge from './components/StatusBadge';
 import AnalysisPanel from './pages/AnalysisPanel';
+import DocumentManager from './pages/DocumentManager';
 import DocumentUpload from './pages/DocumentUpload';
 import JdImport from './pages/JdImport';
+import PlanPanel from './pages/PlanPanel';
 
-const steps = ['资料准备', '目标岗位', '匹配分析'];
+const steps = ['资料准备', '目标岗位', '匹配分析', '准备计划'];
+const JOB_KEY = 'careerpilot.job';
+const ANALYSIS_KEY = 'careerpilot.analysis';
 type Connection = 'checking' | 'connected' | 'disconnected';
 
 function readSelectedReadyDocuments(): string[] {
@@ -43,6 +48,44 @@ function readPendingJob(): { title: string; jd: string } | null {
   }
 }
 
+function readSavedJob(): JobVersionInfo | null {
+  try {
+    const raw = sessionStorage.getItem(JOB_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as Partial<JobVersionInfo> | null;
+    if (
+      !saved ||
+      typeof saved.id !== 'string' ||
+      typeof saved.version !== 'number' ||
+      typeof saved.title !== 'string' ||
+      typeof saved.raw_jd !== 'string'
+    ) {
+      return null;
+    }
+    return {
+      id: saved.id,
+      version: saved.version,
+      title: saved.title,
+      raw_jd: saved.raw_jd,
+      sample: saved.sample === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readSavedAnalysis(): AnalysisResult | null {
+  try {
+    const raw = sessionStorage.getItem(ANALYSIS_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as AnalysisResult | null;
+    if (!saved || typeof saved.id !== 'string' || !Array.isArray(saved.matches)) return null;
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [step, setStep] = useState(0);
   const [connection, setConnection] = useState<Connection>('checking');
@@ -51,7 +94,13 @@ export default function App() {
   const [probeMessage, setProbeMessage] = useState('');
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
-  const [hasRealAnalysis, setHasRealAnalysis] = useState(false);
+  const [initialAnalysis] = useState(() => readSavedAnalysis());
+  const [hasRealAnalysis, setHasRealAnalysis] = useState(initialAnalysis !== null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(initialAnalysis);
+  const [analysisStale, setAnalysisStale] = useState(false);
+  const [job, setJob] = useState<JobVersionInfo | null>(() => readSavedJob());
+  const [jobBusy, setJobBusy] = useState(false);
+  const [jobNotice, setJobNotice] = useState<JobNotice | null>(null);
   const [documentIds, setDocumentIds] = useState<string[]>([]);
   const [title, setTitle] = useState(() => readPendingJob()?.title ?? '后端开发实习生');
   const [jd, setJd] = useState(() => readPendingJob()?.jd ?? '');
@@ -66,9 +115,18 @@ export default function App() {
     sessionStorage.removeItem('careerpilot.selected_documents');
     sessionStorage.removeItem('careerpilot.pending_analysis');
     sessionStorage.removeItem('careerpilot.owner');
+    sessionStorage.removeItem(JOB_KEY);
+    sessionStorage.removeItem(ANALYSIS_KEY);
+    sessionStorage.removeItem('careerpilot.plan_draft');
+    sessionStorage.removeItem('careerpilot.event_cursor');
     setDocumentIds([]);
     setHasRealAnalysis(false);
+    setAnalysis(null);
+    setAnalysisStale(false);
     setAnalysisVisible(false);
+    setJob(null);
+    setJobNotice(null);
+    setJobBusy(false);
     setJd('');
   }
 
@@ -163,6 +221,9 @@ export default function App() {
   function loadSample() {
     setSampleLoaded(true);
     setAnalysisVisible(false);
+    setAnalysisStale(false);
+    setJob(null);
+    setJobNotice(null);
     setTitle('后端开发实习生');
     setJd(sampleInputs.jdText);
     setStep(1);
@@ -172,7 +233,121 @@ export default function App() {
     setJd(value);
     setSampleLoaded(false);
     setAnalysisVisible(false);
+    setJobNotice(null);
   }
+
+  useEffect(() => {
+    if (job) {
+      sessionStorage.setItem(JOB_KEY, JSON.stringify(job));
+    } else {
+      sessionStorage.removeItem(JOB_KEY);
+    }
+  }, [job]);
+
+  function applyJob(next: JobVersionInfo) {
+    setJob(next);
+    if (analysis) setAnalysisStale(true);
+  }
+
+  async function saveJob() {
+    if (!jd.trim()) {
+      setJobNotice({ tone: 'danger', text: '请先填写岗位 JD 后再保存。' });
+      return;
+    }
+    if (!title.trim()) {
+      setJobNotice({ tone: 'danger', text: '请先填写岗位名称后再保存。' });
+      return;
+    }
+    if (!user) {
+      setJobNotice({ tone: 'danger', text: '请先登录后再保存岗位。' });
+      return;
+    }
+    setJobBusy(true);
+    setJobNotice(null);
+    try {
+      if (job && !job.sample && job.title === title.trim()) {
+        try {
+          const response = await api.patchJob(job.id, {
+            raw_jd: jd,
+            expected_version: job.version,
+          });
+          applyJob({
+            id: response.data.id,
+            version: response.data.version,
+            title: response.data.title,
+            raw_jd: response.data.raw_jd,
+          });
+          setJobNotice({ tone: 'success', text: `岗位已保存为 v${response.data.version}。` });
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 409) {
+            const latest = await api.getJob(job.id);
+            applyJob({
+              id: latest.data.id,
+              version: latest.data.version,
+              title: latest.data.title,
+              raw_jd: latest.data.raw_jd,
+            });
+            setJobNotice({
+              tone: 'warning',
+              text: `版本冲突：已加载最新版本 v${latest.data.version}，本次修改未覆盖，请核对后再保存。`,
+            });
+            return;
+          }
+          throw error;
+        }
+      } else {
+        const created = await api.createJob({ title: title.trim(), raw_jd: jd });
+        applyJob({
+          id: created.data.job_id,
+          version: created.data.version,
+          title: title.trim(),
+          raw_jd: jd,
+        });
+        setJobNotice({
+          tone: 'success',
+          text: `岗位已创建为 v${created.data.version}。`,
+        });
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 501) {
+        setJobNotice({
+          tone: 'warning',
+          text: '后端尚未实现岗位编辑接口（PATCH /jobs 返回 501），本次修改未保存。',
+        });
+      } else if (error instanceof ApiError && error.status === 404) {
+        setJob(null);
+        setJobNotice({
+          tone: 'warning',
+          text: '岗位不存在或不属于当前账号（404），已清除本地岗位，请重新保存。',
+        });
+      } else {
+        setJobNotice({ tone: 'danger', text: describeError(error).message });
+      }
+    } finally {
+      setJobBusy(false);
+    }
+  }
+
+  function saveSampleJob() {
+    if (!jd.trim()) {
+      setJobNotice({ tone: 'danger', text: '请先填写岗位 JD 再保存。' });
+      return;
+    }
+    const next: JobVersionInfo = {
+      id: 'job_demo_local',
+      version: (job?.sample ? job.version : 0) + 1,
+      title: title.trim() || '示例岗位',
+      raw_jd: jd,
+      sample: true,
+    };
+    applyJob(next);
+    setJobNotice({
+      tone: 'success',
+      text: `已保存本地样例岗位 v${next.version}（只保存在浏览器，不写入后端）。`,
+    });
+  }
+
+  const jobDirty = job ? jd !== job.raw_jd || title.trim() !== job.title : false;
 
   async function probe() {
     setProbing(true);
@@ -232,16 +407,16 @@ export default function App() {
           ))}
         </nav>
         <div className="sidebar-note">
-          <p className="eyebrow">M2 / 本地开发</p>
+          <p className="eyebrow">M2 / 资料与计划</p>
           <p>先整理资料，再用证据理解岗位要求。</p>
-          <span>分析后可生成准备计划，检查草稿后再确认保存。</span>
+          <span>资料版本、岗位编辑与准备计划已在 M2 接入。</span>
         </div>
         <div className="connection-block">
           <StatusBadge
             label={connectionLabel}
             tone={connection === 'connected' ? 'success' : 'neutral'}
           />
-          <p>可继续检查资料处理和分析所需的服务。</p>
+          <p>连接状态仅代表基础 API 可用，业务功能仍待接入。</p>
           <a href={api.docsUrl} target="_blank" rel="noreferrer">
             打开 API 文档 <span aria-hidden="true">↗</span>
           </a>
@@ -280,7 +455,7 @@ export default function App() {
         <div className="page-intro">
           <p className="eyebrow">CAREERPILOT / WORKSPACE</p>
           <h1>你的求职准备，从经历开始。</h1>
-          <p>整理个人资料，选择目标岗位，再查看每条要求对应的证据。</p>
+          <p>整理个人资料，选择目标岗位，核对证据，再生成准备计划。</p>
         </div>
         <div className="demo-notice">
           <span className="notice-label">开发预览</span>
@@ -385,6 +560,25 @@ export default function App() {
                 </button>
               </div>
             </div>
+            <DocumentManager
+              userId={user?.id}
+              onDeleted={(id) => {
+                setDocumentIds((prev) => prev.filter((item) => item !== id));
+                try {
+                  const selected = JSON.parse(
+                    sessionStorage.getItem('careerpilot.selected_documents') ?? '[]',
+                  );
+                  if (Array.isArray(selected)) {
+                    sessionStorage.setItem(
+                      'careerpilot.selected_documents',
+                      JSON.stringify(selected.filter((item) => item !== id)),
+                    );
+                  }
+                } catch {
+                  // 本地选择状态损坏时忽略；刷新时仍会与已就绪资料求交集。
+                }
+              }}
+            />
             <div className="footnote">
               原始资料、片段与结论分开保存。缺少证据时，系统应如实标记“资料未体现”。
             </div>
@@ -413,6 +607,7 @@ export default function App() {
                   setTitle(event.target.value);
                   setSampleLoaded(false);
                   setAnalysisVisible(false);
+                  setJobNotice(null);
                 }}
               />
               <label htmlFor="job-description" className="field-label">
@@ -430,6 +625,16 @@ export default function App() {
                   ? '已载入匹配的合成资料。可以查看固定样例分析。'
                   : '准备已就绪的资料后，可对岗位内容发起真实分析。'}
               </p>
+
+              <JdVersionBar
+                job={job}
+                dirty={jobDirty}
+                busy={jobBusy}
+                notice={jobNotice}
+                stale={analysisStale}
+                onSave={() => void saveJob()}
+                onSampleSave={saveSampleJob}
+              />
 
               <div className="form-actions">
                 <button className="text-button" onClick={() => setStep(0)}>
@@ -465,24 +670,60 @@ export default function App() {
               </button>
             </section>
           ) : null)}
+        {step === 2 && analysis && (
+          <section className="panel plan-entry">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">下一步</p>
+                <h3>分析完成，生成准备计划</h3>
+              </div>
+              <button type="button" className="primary-button" onClick={() => setStep(3)}>
+                生成准备计划 →
+              </button>
+            </div>
+            <p className="small muted">
+              根据分析结果、目标日期和每天可用时间生成计划草稿；确认前不会创建正式任务。
+            </p>
+            {analysisStale && (
+              <p className="error-text small" role="status">
+                岗位 JD 已更新，上次分析可能已过期；请重新分析后再生成计划。
+              </p>
+            )}
+          </section>
+        )}
         <div
           className="panel"
-          hidden={step === 0 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
+          hidden={step === 0 || step === 3 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
         >
           {(!hasAuthToken() || user) && (
             <JdImport
               key={user?.id ?? 'anonymous'}
-              userId={user?.id}
               jd={jd}
               title={title}
               documentIds={documentIds}
+              job={job}
+              jobDirty={jobDirty}
+              onJobCreated={(created) => {
+                setJob(created);
+                setJobNotice(null);
+              }}
               onAnalysis={(result) => {
+                if (result) {
+                  sessionStorage.setItem(ANALYSIS_KEY, JSON.stringify(result));
+                } else {
+                  sessionStorage.removeItem(ANALYSIS_KEY);
+                }
+                setAnalysis(result);
                 setHasRealAnalysis(result !== null);
+                setAnalysisStale(false);
                 if (result) setAnalysisVisible(false);
               }}
+              initialAnalysis={analysis}
+              onGoToPlan={() => setStep(3)}
             />
           )}
         </div>
+        {step === 3 && <PlanPanel analysisId={analysis?.id} analysisTitle={title} />}
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>
           <span>开发预览</span>

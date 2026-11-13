@@ -1,4 +1,14 @@
 import type { components } from './schema';
+import type {
+  DocumentDeleteAccepted,
+  DocumentExtraction,
+  DocumentTextUpdate,
+  DocumentUpdateAccepted,
+  PlanConfirmResult,
+  PlanCreateRequest,
+  PlanResult,
+  ResumeRequest,
+} from './m2-types';
 
 type Envelope<T> = { data: T; request_id: string };
 type ErrorEnvelope = components['schemas']['ErrorEnvelope'];
@@ -15,11 +25,17 @@ type Evidence = components['schemas']['Evidence'];
 type DocumentAccepted = components['schemas']['DocumentAccepted'];
 type DocumentResult = components['schemas']['DocumentResult'];
 type DocumentPage = components['schemas']['DocumentPage'];
+type DocumentDetail = DocumentResult & {
+  extraction?: DocumentExtraction | null;
+  /** 兼容旧快照字段；新后端使用 extraction。 */
+  extracted_text?: string | null;
+};
+type JobResult = components['schemas']['JobResult'];
 type LoginRequest = components['schemas']['LoginRequest'];
 type TokenResult = components['schemas']['TokenResult'];
 export type UserResult = components['schemas']['UserResult'];
 
-const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+export const apiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const TOKEN_KEY = 'careerpilot.token';
 
 export function setAuthToken(token: string | null) {
@@ -34,8 +50,12 @@ export function hasAuthToken(): boolean {
   return Boolean(sessionStorage.getItem(TOKEN_KEY));
 }
 
+export function getAuthToken(): string | null {
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+
 function authHeaders(): Record<string, string> {
-  const token = sessionStorage.getItem(TOKEN_KEY);
+  const token = getAuthToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -52,7 +72,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   options: {
     body?: unknown;
@@ -70,7 +90,7 @@ async function request<T>(
     headers['Content-Type'] = 'application/json';
     payloadBody = JSON.stringify(body);
   }
-  const response = await fetch(`${base}${path}`, {
+  const response = await fetch(`${apiBase}${path}`, {
     method,
     headers,
     body: payloadBody,
@@ -120,7 +140,41 @@ export const api = {
       { signal },
     ),
   getDocument: (id: string, signal?: AbortSignal) =>
-    request<DocumentResult>('GET', `/api/v1/documents/${encodeURIComponent(id)}`, { signal }),
+    request<DocumentDetail>('GET', `/api/v1/documents/${encodeURIComponent(id)}`, { signal }),
+  updateDocumentText: (id: string, body: DocumentTextUpdate, signal?: AbortSignal) =>
+    request<DocumentUpdateAccepted>('PUT', `/api/v1/documents/${encodeURIComponent(id)}/text`, {
+      body,
+      signal,
+    }),
+  deleteDocument: (id: string, signal?: AbortSignal) =>
+    request<DocumentDeleteAccepted>('DELETE', `/api/v1/documents/${encodeURIComponent(id)}`, {
+      signal,
+    }),
+  reindexDocument: (id: string, body: { expected_version: number }, signal?: AbortSignal) =>
+    request<ExecutionAccepted>('POST', `/api/v1/documents/${encodeURIComponent(id)}/reindex`, {
+      body,
+      signal,
+    }),
+  getJob: (id: string, signal?: AbortSignal) =>
+    request<JobResult>('GET', `/api/v1/jobs/${encodeURIComponent(id)}`, { signal }),
+  patchJob: (
+    id: string,
+    body: { raw_jd?: string; requirements?: unknown; expected_version: number },
+    signal?: AbortSignal,
+  ) => request<JobResult>('PATCH', `/api/v1/jobs/${encodeURIComponent(id)}`, { body, signal }),
+  createPlan: (body: PlanCreateRequest, signal?: AbortSignal) =>
+    request<ExecutionAccepted>('POST', '/api/v1/plans', { body, signal }),
+  getPlan: (id: string, signal?: AbortSignal) =>
+    request<PlanResult>('GET', `/api/v1/plans/${encodeURIComponent(id)}`, { signal }),
+  confirmPlan: (id: string, signal?: AbortSignal) =>
+    request<PlanConfirmResult>('POST', `/api/v1/plans/${encodeURIComponent(id)}/confirm`, {
+      signal,
+    }),
+  resumeExecution: (id: string, body: ResumeRequest, signal?: AbortSignal) =>
+    request<ExecutionAccepted>('POST', `/api/v1/executions/${encodeURIComponent(id)}/resume`, {
+      body,
+      signal,
+    }),
   createJob: (body: JobCreate, signal?: AbortSignal) =>
     request<JobCreated>('POST', '/api/v1/jobs', { body, signal }),
   createAnalysis: (body: AnalysisCreate, signal?: AbortSignal) =>
@@ -133,20 +187,5 @@ export const api = {
     request<Evidence>('GET', `/api/v1/evidence/${encodeURIComponent(chunkId)}?version=${version}`, {
       signal,
     }),
-  resumeExecution: (id: string, body: components['schemas']['ResumeRequest']) =>
-    request<ExecutionAccepted>('POST', `/api/v1/executions/${encodeURIComponent(id)}/resume`, {
-      body,
-    }),
-  createPlan: (body: components['schemas']['PlanCreate']) =>
-    request<ExecutionAccepted>('POST', '/api/v1/plans', { body }),
-  getPlan: (id: string, signal?: AbortSignal) =>
-    request<components['schemas']['PlanResult']>('GET', `/api/v1/plans/${encodeURIComponent(id)}`, {
-      signal,
-    }),
-  confirmPlan: (id: string) =>
-    request<components['schemas']['PlanConfirmed']>(
-      'POST',
-      `/api/v1/plans/${encodeURIComponent(id)}/confirm`,
-    ),
-  docsUrl: `${base}/docs`,
+  docsUrl: `${apiBase}/docs`,
 };

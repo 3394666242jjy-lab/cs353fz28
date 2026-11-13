@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { describeError } from '../api/errors';
-import type { components } from '../api/schema';
+import type { PlanResult } from '../api/m2-types';
 
 export default function PreparationPlan({ analysisId }: { analysisId: string }) {
   const key = `careerpilot.plan.${analysisId}`;
   const [executionId, setExecutionId] = useState(() => sessionStorage.getItem(key) ?? '');
-  const [plan, setPlan] = useState<components['schemas']['PlanResult'] | null>(null);
+  const [plan, setPlan] = useState<PlanResult | null>(null);
   const [deadline, setDeadline] = useState('');
   const [minutes, setMinutes] = useState(60);
   const [zone, setZone] = useState(
