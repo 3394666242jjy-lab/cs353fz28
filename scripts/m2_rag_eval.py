@@ -56,8 +56,8 @@ def backend() -> SimpleNamespace:
     if _BACKEND is None:
         if str(BACKEND) not in sys.path:
             sys.path.insert(0, str(BACKEND))
-        import app.rag.eval_metrics as eval_metrics
         from app.config import Settings, get_settings
+        from app.rag import eval_metrics
         from app.rag.bm25 import Bm25Encoder
         from app.rag.chunking import chunk_document, parse_document
         from app.rag.embeddings import get_embedding_provider
@@ -117,6 +117,12 @@ class TimedStore:
     async def search(self, **kwargs):
         start = time.perf_counter()
         hits = await self._inner.search(**kwargs)
+        self.elapsed_ms += (time.perf_counter() - start) * 1000
+        return hits
+
+    async def search_sparse(self, **kwargs):
+        start = time.perf_counter()
+        hits = await self._inner.search_sparse(**kwargs)
         self.elapsed_ms += (time.perf_counter() - start) * 1000
         return hits
 
@@ -335,11 +341,45 @@ async def evaluate(
             if question["id"] in done:
                 continue
             payload = question_to_payload(question)
+            deleted_documents = []
+            if question["kind"] == "deleted":
+                manifest = load_manifest()
+                for document in manifest["documents"]:
+                    if document["user_id"] != question["user_id"]:
+                        continue
+                    ids = {
+                        chunk_id
+                        for chunk_id in question.get("forbidden_chunk_ids", [])
+                        if chunk_id in corpus_chunk_map({"documents": [document]}, settings)
+                    }
+                    if ids:
+                        await store.delete_document_points(
+                            user_id=document["user_id"],
+                            document_id=document["document_id"],
+                        )
+                        deleted_documents.append(document)
+                if not deleted_documents:
+                    raise RuntimeError("删除负例没有找到实际目标文档，拒绝伪造验证")
             embedder.reset()
             store.reset()
             started = time.perf_counter()
-            result = await retrieve_once(source, payload, top_k=top_k, mods=mods)
-            total_ms = (time.perf_counter() - started) * 1000
+            try:
+                result = await retrieve_once(source, payload, top_k=top_k, mods=mods)
+                total_ms = (time.perf_counter() - started) * 1000
+            finally:
+                # Restore only this isolated evaluation document, so subsequent
+                # strategies see the same complete corpus for positive queries.
+                for document in deleted_documents:
+                    await mods.index_document(
+                        (CORPUS_DIR / document["path"]).read_bytes(),
+                        user_id=document["user_id"],
+                        document_id=document["document_id"],
+                        version=document["version"],
+                        file_type=document["file_type"],
+                        settings=settings,
+                        store=mods.get_vector_store(settings),
+                        sparse_encoder=sparse_encoder,
+                    )
             config_versions.add(result.retrieval_config_version)
             sink.write(
                 json.dumps(
@@ -354,6 +394,7 @@ async def evaluate(
                         "total_ms": total_ms,
                         "embedding_ms": embedder.elapsed_ms,
                         "search_ms": store.elapsed_ms,
+                        "deletion_verified": bool(deleted_documents),
                     },
                     ensure_ascii=False,
                 )
@@ -388,6 +429,7 @@ def load_results(strategy: str, questions: list[dict], suffix: str = "") -> list
                 total_ms=row["total_ms"],
                 embedding_ms=row["embedding_ms"],
                 search_ms=row["search_ms"],
+                deletion_verified=row.get("deletion_verified", False),
             )
         )
     return results

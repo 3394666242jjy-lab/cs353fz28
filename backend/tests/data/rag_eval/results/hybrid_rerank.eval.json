@@ -27,16 +27,15 @@
     },
     "deleted": {
       "count": 3,
-      "violations": 3,
-      "rate": 1.0,
-      "pending": true
+      "violations": 0,
+      "rate": 0.0
     }
   },
   "latency_ms": {
     "count": 39,
-    "p50": 5445.52150000527,
-    "p95": 7910.664800001541,
-    "mean_embedding": 585.6292333330016,
-    "mean_search": 2645.4557205127994
+    "p50": 634.0653999941424,
+    "p95": 938.312100013718,
+    "mean_embedding": 329.7866358987402,
+    "mean_search": 81.42121794606702
   }
 }
