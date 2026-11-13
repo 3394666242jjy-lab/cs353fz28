@@ -71,6 +71,8 @@ interface JdImportProps {
   onJobCreated?: (job: JobVersionInfo) => void;
   /** 分析成功后回调，便于父组件切换页面。 */
   onAnalysis?: (analysis: AnalysisResult | null) => void;
+  /** 刷新后恢复已保存的分析结果。 */
+  initialAnalysis?: AnalysisResult | null;
   /** 计划确认类等待输入跳转到计划页。 */
   onGoToPlan?: () => void;
 }
@@ -120,6 +122,7 @@ export default function JdImport({
   onJobCreated,
   onAnalysis,
   onGoToPlan,
+  initialAnalysis = null,
 }: JdImportProps) {
   const [mode, setMode] = useState<Mode>('real');
   const [phase, setPhase] = useState<Phase>('idle');
@@ -191,6 +194,20 @@ export default function JdImport({
       const controller = new AbortController();
       abortRef.current = controller;
       follow(saved.executionId, controller);
+    } else if (initialAnalysis) {
+      const controller = new AbortController();
+      abortRef.current = controller;
+      api
+        .getAnalysis(initialAnalysis.id, controller.signal)
+        .then((response) => {
+          if (controller.signal.aborted) return;
+          setAnalysis(response.data);
+          setPhase('succeeded');
+          onAnalysisRef.current?.(response.data);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) onAnalysisRef.current?.(null);
+        });
     }
     return () => {
       mountedRef.current = false;

@@ -4,12 +4,24 @@ name: careerpilot-dev
 services:
   mongodb:
     image: mongo:8.0
+    # 单节点副本集：M2 的计划确认/恢复把多文档写入放进 MongoDB 事务，
+    # 事务要求副本集；健康检查在首次启动时自动完成 rs.initiate（dev/12）。
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "127.0.0.1:${MONGO_HOST_PORT:-27017}:27017"
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand('ping').ok ? 0 : 2)"]
+      test:
+        - CMD-SHELL
+        - >
+          mongosh --quiet --eval "
+          var ok = 0;
+          try { ok = rs.status().ok; }
+          catch (e) {
+            try { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'localhost:27017'}]}); } catch (initErr) {}
+          }
+          quit(ok ? 0 : 2)"
       interval: 10s
       timeout: 5s
       retries: 10

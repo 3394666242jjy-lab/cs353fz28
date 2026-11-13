@@ -718,6 +718,7 @@ export default function App() {
                 setAnalysisStale(false);
                 if (result) setAnalysisVisible(false);
               }}
+              initialAnalysis={analysis}
               onGoToPlan={() => setStep(3)}
             />
           )}

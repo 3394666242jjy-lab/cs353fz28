@@ -12,6 +12,7 @@ from app.config import Settings
 from app.schemas.common import ContractModel
 from app.schemas.resources import ExecutionError, ExecutionResult, PendingInput
 from app.services.database import database_connection
+from app.services.events import append_event_best_effort
 
 
 class ExecutionCreate(ContractModel):
@@ -19,10 +20,18 @@ class ExecutionCreate(ContractModel):
 
     type: Literal["index", "analysis", "plan"]
     resource_id: str = Field(min_length=1)
+    # Index executions target one document version (M2); recovery decides
+    # success from that version row, not from the document's current state.
+    resource_version: int | None = Field(default=None, ge=1)
 
 
 def _ensure_indexes(database: Database[dict[str, Any]]) -> None:
-    """Create M1 indexes per dev/03; safe to repeat on every call."""
+    """Create M1 indexes per dev/03; safe to repeat on every call.
+
+    Never call this inside an open transaction: index/collection creation
+    must commit before the transaction starts (WriteConflict otherwise).
+    Use :func:`ensure_execution_indexes` before opening one.
+    """
     database.executions.create_index("id", unique=True)
     database.executions.create_index([("user_id", 1), ("created_at", -1)])
     database.executions.create_index([("status", 1), ("created_at", -1)])
@@ -31,30 +40,54 @@ def _ensure_indexes(database: Database[dict[str, Any]]) -> None:
     )
 
 
-def create_execution(settings: Settings, user_id: str, payload: ExecutionCreate) -> str:
-    """Queue a new execution at state_version 1."""
-    execution_id = f"exec_{uuid4().hex}"
-    now = datetime.now(UTC)
+def ensure_execution_indexes(settings: Settings) -> None:
+    """Create the indexes outside any transaction; call before opening one."""
     with database_connection(settings) as database:
         _ensure_indexes(database)
-        database.executions.insert_one(
-            {
-                "id": execution_id,
-                "user_id": user_id,
-                "type": payload.type,
-                "resource_id": payload.resource_id,
-                "status": "queued",
-                "state_version": 1,
-                "result_type": None,
-                "result_id": None,
-                "pending_input": None,
-                "latest_event_id": None,
-                "error": None,
-                "created_at": now,
-                "updated_at": now,
-            }
-        )
+
+
+def insert_execution(
+    database: Database[dict[str, Any]],
+    user_id: str,
+    payload: ExecutionCreate,
+    *,
+    session: Any = None,
+) -> str:
+    """Insert one queued execution inside the caller's (transactional) scope.
+
+    The caller must have run :func:`ensure_execution_indexes` beforehand;
+    creating indexes inside the transaction races its snapshot.
+    """
+    payload = ExecutionCreate.model_validate(payload)
+    execution_id = f"exec_{uuid4().hex}"
+    now = datetime.now(UTC)
+    row: dict[str, Any] = {
+        "id": execution_id,
+        "user_id": user_id,
+        "type": payload.type,
+        "resource_id": payload.resource_id,
+        "status": "queued",
+        "state_version": 1,
+        "result_type": None,
+        "result_id": None,
+        "pending_input": None,
+        "latest_event_id": None,
+        "event_seq": 0,
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    if payload.resource_version is not None:
+        row["resource_version"] = payload.resource_version
+    database.executions.insert_one(row, session=session)
     return execution_id
+
+
+def create_execution(settings: Settings, user_id: str, payload: ExecutionCreate) -> str:
+    """Queue a new execution at state_version 1."""
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        return insert_execution(database, user_id, payload)
 
 
 def get_execution(settings: Settings, user_id: str, execution_id: str) -> ExecutionResult | None:
@@ -95,11 +128,15 @@ def transition_execution(
     result_type: Literal["document", "analysis", "plan"] | None = None,
     result_id: str | None = None,
     error: ExecutionError | None = None,
+    stage: str | None = None,
 ) -> bool:
     """Guarded transition; returns False on stale state version or wrong owner.
 
     Only waiting_for_input carries pending_input and only failed carries an
-    error, matching ExecutionResult's validators.
+    error, matching ExecutionResult's validators. A successful transition also
+    emits the matching P0 SSE event (dev/04): running→stage, succeeded→completed,
+    failed→failed. Event loss never rolls back the business write; SSE clients
+    recover from the execution snapshot.
     """
     # Validate state semantics against the shared contract before writing.
     ExecutionResult(
@@ -136,7 +173,84 @@ def transition_execution(
             },
             {"$set": update, "$inc": {"state_version": 1}},
         )
-    return result.matched_count == 1
+    if result.matched_count != 1:
+        return False
+    if status == "running":
+        event_type = "stage"
+    elif status == "succeeded":
+        event_type = "completed"
+    else:
+        event_type = "failed"
+    append_event_best_effort(
+        settings,
+        user_id,
+        execution_id,
+        event_type=event_type,
+        status=status,
+        stage=stage,
+        payload={
+            "execution_id": execution_id,
+            "status": status,
+            "stage": stage,
+            "result_type": result_type,
+            "result_id": result_id,
+            "error": error.model_dump() if error else None,
+        },
+    )
+    return True
+
+
+def transition_to_waiting(
+    settings: Settings,
+    user_id: str,
+    execution_id: str,
+    *,
+    expected_state_version: int,
+    pending_input: PendingInput,
+    stage: str | None = None,
+) -> bool:
+    """Park a running execution at waiting_for_input and emit the SSE event.
+
+    Used when the agent (member D) needs user input or a plan confirmation;
+    the worker releases its lease and the interrupt/checkpoint identity is
+    frozen into pending_input for the resume contract.
+    """
+    pending_input = PendingInput.model_validate(pending_input)
+    with database_connection(settings) as database:
+        _ensure_indexes(database)
+        result = database.executions.update_one(
+            {
+                "id": execution_id,
+                "user_id": user_id,
+                "state_version": expected_state_version,
+                "recovery_claim": {"$exists": False},
+                "status": {"$in": ["queued", "running"]},
+            },
+            {
+                "$set": {
+                    "status": "waiting_for_input",
+                    "pending_input": pending_input.model_dump(),
+                    "updated_at": datetime.now(UTC),
+                },
+                "$inc": {"state_version": 1},
+            },
+        )
+    if result.matched_count != 1:
+        return False
+    append_event_best_effort(
+        settings,
+        user_id,
+        execution_id,
+        event_type="waiting_for_input",
+        status="waiting_for_input",
+        stage=stage,
+        payload={
+            "execution_id": execution_id,
+            "status": "waiting_for_input",
+            "pending_input": pending_input.model_dump(),
+        },
+    )
+    return True
 
 
 def heartbeat_execution(settings: Settings, user_id: str, execution_id: str) -> None:
@@ -194,29 +308,49 @@ def _recover_expired(
         message = "后台任务中断或超时，请重新提交。"
         resource_type = claim["type"]
         if resource_type == "index":
-            collection = database.documents
-            pending = "uploaded"
+            # Version-aware recovery (M2): success means the target version
+            # was published; a crashed build fails only its own version row,
+            # so a re-index failure never destroys the published version.
             result_type = "document"
-            resource_filter = {"id": resource_id, "user_id": user_id, "deleted_at": None}
+            version = claim.get("resource_version") or 1
+            version_row = database.document_versions.find_one(
+                {"document_id": resource_id, "user_id": user_id, "version": version},
+                {"_id": 0, "status": 1},
+            )
+            success = bool(version_row and version_row.get("status") == "ready")
+            if not success:
+                database.document_versions.update_one(
+                    {
+                        "document_id": resource_id,
+                        "user_id": user_id,
+                        "version": version,
+                        "status": {"$in": ["uploaded", "writing"]},
+                    },
+                    {"$set": {"status": "failed", "error": message, "updated_at": now}},
+                )
+                if version == 1:
+                    database.documents.update_one(
+                        {
+                            "id": resource_id,
+                            "user_id": user_id,
+                            "deleted_at": None,
+                            "status": "uploaded",
+                        },
+                        {"$set": {"status": "failed", "error": message, "updated_at": now}},
+                    )
         elif resource_type == "analysis":
-            collection = database.analyses
-            pending = "pending"
             result_type = "analysis"
+            collection = database.analyses
             resource_filter = {"id": resource_id, "user_id": user_id}
-        else:
-            collection = None
-            pending = ""
-            result_type = None
-            resource_filter = {}
-        if collection is not None:
             collection.update_one(
-                {**resource_filter, "status": pending},
+                {**resource_filter, "status": "pending"},
                 {"$set": {"status": "failed", "error": message, "updated_at": now}},
             )
             resource = collection.find_one(resource_filter, {"status": 1})
+            success = bool(resource and resource.get("status") == "ready")
         else:
-            resource = None
-        success = bool(resource and resource.get("status") == "ready")
+            result_type = None
+            success = False
         status = "succeeded" if success else "failed"
         changes = {
             "status": status,
@@ -225,7 +359,7 @@ def _recover_expired(
             "result_id": resource_id if success else None,
             "error": None if success else {"code": "WORKER_INTERRUPTED", "message": message},
         }
-        return database.executions.find_one_and_update(
+        recovered = database.executions.find_one_and_update(
             {
                 "id": execution_id,
                 "user_id": user_id,
@@ -240,6 +374,25 @@ def _recover_expired(
             projection={"_id": 0},
             return_document=ReturnDocument.AFTER,
         )
+    if recovered is not None and recovered.get("status") == status:
+        # Let SSE subscribers observe the reconciled terminal state; clients
+        # that missed it still recover via the execution snapshot.
+        append_event_best_effort(
+            settings,
+            user_id,
+            execution_id,
+            event_type="completed" if success else "failed",
+            status=status,
+            payload={
+                "execution_id": execution_id,
+                "status": status,
+                "result_type": changes["result_type"],
+                "result_id": changes["result_id"],
+                "error": changes["error"],
+                "recovered": True,
+            },
+        )
+    return recovered
 
 
 def _reconcile_failed_resource(settings: Settings, user_id: str, execution: dict[str, Any]) -> None:
@@ -254,26 +407,40 @@ def _reconcile_failed_resource(settings: Settings, user_id: str, execution: dict
         return
     error = execution.get("error") or {}
     message = error.get("message") or "后台任务失败，请重新提交。"
+    now = datetime.now(UTC)
     with database_connection(settings) as database:
         if resource_type == "index":
-            collection = database.documents
-            resource_filter = {
-                "id": resource_id,
-                "user_id": user_id,
-                "deleted_at": None,
-                "status": "uploaded",
-            }
+            # Fail only the target version row; the document itself is failed
+            # solely for a first upload, never for a re-index (M2).
+            version = execution.get("resource_version") or 1
+            database.document_versions.update_one(
+                {
+                    "document_id": resource_id,
+                    "user_id": user_id,
+                    "version": version,
+                    "status": {"$in": ["uploaded", "writing"]},
+                },
+                {"$set": {"status": "failed", "error": message, "updated_at": now}},
+            )
+            if version == 1:
+                database.documents.update_one(
+                    {
+                        "id": resource_id,
+                        "user_id": user_id,
+                        "deleted_at": None,
+                        "status": "uploaded",
+                    },
+                    {"$set": {"status": "failed", "error": message, "updated_at": now}},
+                )
         else:
-            collection = database.analyses
-            resource_filter = {"id": resource_id, "user_id": user_id, "status": "pending"}
-        collection.update_one(
-            resource_filter,
-            {"$set": {"status": "failed", "error": message, "updated_at": datetime.now(UTC)}},
-        )
+            database.analyses.update_one(
+                {"id": resource_id, "user_id": user_id, "status": "pending"},
+                {"$set": {"status": "failed", "error": message, "updated_at": now}},
+            )
         if execution.get("id"):
             database.executions.update_one(
                 {"id": execution["id"], "user_id": user_id, "status": "failed"},
-                {"$set": {"resource_reconciled_at": datetime.now(UTC)}},
+                {"$set": {"resource_reconciled_at": now}},
             )
 
 
@@ -308,7 +475,15 @@ def sweep_expired_executions(settings: Settings, *, limit: int = 100) -> None:
                         },
                     ]
                 },
-                {"id": 1, "user_id": 1, "type": 1, "resource_id": 1, "status": 1, "error": 1},
+                {
+                    "id": 1,
+                    "user_id": 1,
+                    "type": 1,
+                    "resource_id": 1,
+                    "resource_version": 1,
+                    "status": 1,
+                    "error": 1,
+                },
             )
             .sort("updated_at", 1)
             .limit(limit)
@@ -332,7 +507,14 @@ def recover_document_execution(settings: Settings, user_id: str, document_id: st
                     "resource_id": document_id,
                     "status": {"$in": ["queued", "running", "failed"]},
                 },
-                {"id": 1, "type": 1, "resource_id": 1, "status": 1, "error": 1},
+                {
+                    "id": 1,
+                    "type": 1,
+                    "resource_id": 1,
+                    "resource_version": 1,
+                    "status": 1,
+                    "error": 1,
+                },
             )
         )
     for execution in executions:

@@ -1,6 +1,6 @@
 # CareerPilot 数据库设计
 
-状态：v0.4 设计草案与 M1 契约候选版。负责人维护逻辑设计，B 实现业务集合，C 实现片段及 Qdrant 映射，D 与 B 约定分析结构。当前未创建生产数据库。
+状态：v0.5 M2 实施版。负责人维护逻辑设计，B 实现业务集合，C 实现片段及 Qdrant 映射，D 与 B 约定分析结构。M1 集合已上线；M2 的 execution_events、dispatch_events、execution_inputs、plans、plan_tasks 已由 B 实现（Issue #24，恢复语义见 [12 可靠性与恢复说明](12-M2后端任务可靠性与恢复-backend-reliability.md)）。当前未创建生产数据库。
 
 ## M1 数据范围
 
