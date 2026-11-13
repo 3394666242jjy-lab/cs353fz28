@@ -292,6 +292,8 @@ def run_indexing(
         store = _load_vector_store()(settings_obj)
 
         async def _run_pipeline() -> Any:
+            from app.rag.bm25 import application_encoder
+
             # C's adapter signals "call ensure_collection first"; creating the
             # collection is B's orchestration duty, not the pipeline's.
             await store.ensure_collection()
@@ -303,6 +305,11 @@ def run_indexing(
                 file_type=Path(storage_key).suffix.lower(),
                 store=store,
                 settings=settings_obj,
+                **(
+                    {"sparse_encoder": application_encoder()}
+                    if settings_obj.retrieval_strategy != "dense"
+                    else {}
+                ),
             )
 
         indexed = asyncio.run(_run_pipeline())
@@ -369,7 +376,7 @@ class _MongoEvidenceRetriever:
     is also what GET /evidence/{chunk_id} serves.
     """
 
-    def __init__(self, settings_obj: Any, source: Any) -> None:
+    def __init__(self, settings_obj: Any, source: Any = None) -> None:
         self._settings = settings_obj
         self._source = source
         # D's pipeline stamps this onto the AnalysisResult; fill it from
@@ -384,15 +391,60 @@ class _MongoEvidenceRetriever:
         document_versions: list[DocumentVersion],
         top_k: int = 5,
     ) -> list[Evidence]:
-        result = await self._source.retrieve_evidence(
+        from app.rag.bm25 import APPLICATION_PROFILE, application_encoder
+        from app.rag.retrieval import QdrantEvidenceSource
+
+        live_versions = []
+        for pin in document_versions:
+            document = get_document(self._settings, user_id, pin.document_id)
+            if document and document.status == "ready" and document.current_version == pin.version:
+                if self._source is None and self._settings.retrieval_strategy != "dense":
+                    versions = list_document_versions(self._settings, user_id, pin.document_id)
+                    indexed = next((row for row in versions if row["version"] == pin.version), {})
+                    if "/sparse-" not in indexed.get("index_version", ""):
+                        raise RuntimeError(
+                            "混合检索需要稀疏索引，请按迁移说明创建并发布新资料版本。"
+                        )
+                live_versions.append(pin)
+        allowed = {pin.document_id: pin.version for pin in live_versions}
+
+        def live_row(row: dict) -> bool:
+            document_id = row.get("document_id")
+            version = row.get("version")
+            if document_id not in allowed or allowed[document_id] != version:
+                return False
+            document = get_document(self._settings, user_id, document_id)
+            return (
+                document is not None
+                and document.current_version == version
+                and document.status == "ready"
+            )
+
+        async def resolve_texts(chunk_ids: list[str]) -> dict[str, str]:
+            return {
+                row["id"]: row["text"]
+                for row in list_chunks_by_ids(self._settings, user_id, chunk_ids)
+                if live_row(row)
+            }
+
+        # Resolve before sending text to the external reranker, scoped to this
+        # request's owner, exact pins and currently live documents.
+        source = self._source or QdrantEvidenceSource(
+            self._settings, sparse_encoder=application_encoder(), text_resolver=resolve_texts
+        )
+        if not live_versions:
+            return []
+        result = await source.retrieve_evidence(
             user_id=user_id,
             query=query,
-            document_versions=document_versions,
+            document_versions=live_versions,
             top_k=top_k,
         )
         config_version = getattr(result, "retrieval_config_version", None)
         if isinstance(config_version, str) and config_version.strip():
             self.retrieval_config_version = config_version
+            if self._source is None and self._settings.retrieval_strategy != "dense":
+                self.retrieval_config_version += f"/{APPLICATION_PROFILE}"
         candidates = result.evidence
         rows = {
             row["id"]: row
@@ -405,8 +457,19 @@ class _MongoEvidenceRetriever:
             row = rows.get(candidate.chunk_id)
             if row is None:
                 continue
+            if allowed.get(candidate.document_id) != candidate.version:
+                continue
+            if (
+                row.get("document_id", candidate.document_id) != candidate.document_id
+                or row.get("version", candidate.version) != candidate.version
+            ):
+                continue
             document = get_document(self._settings, user_id, candidate.document_id)
-            if document is None:
+            if (
+                document is None
+                or document.current_version != candidate.version
+                or document.status != "ready"
+            ):
                 continue
             evidence.append(
                 Evidence(
@@ -424,11 +487,7 @@ class _MongoEvidenceRetriever:
 
 def _build_retriever(settings_obj: Any) -> _MongoEvidenceRetriever:
     """Wire C's candidate source to B's MongoDB evidence assembly, lazily."""
-    try:
-        from app.rag.retrieval import QdrantEvidenceSource
-    except ImportError as exc:
-        raise RuntimeError("证据检索模块（app.rag.retrieval，成员 C）尚未集成") from exc
-    return _MongoEvidenceRetriever(settings_obj, QdrantEvidenceSource(settings_obj))
+    return _MongoEvidenceRetriever(settings_obj)
 
 
 @celery_app.task(name="careerpilot.run_analysis")
