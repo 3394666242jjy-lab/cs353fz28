@@ -370,7 +370,7 @@ export default function App() {
 
   const connectionLabel =
     connection === 'connected'
-      ? '后端骨架已连接'
+      ? '后端 API 已连接'
       : connection === 'checking'
         ? '检查后端连接…'
         : '后端未连接';
@@ -416,7 +416,7 @@ export default function App() {
             label={connectionLabel}
             tone={connection === 'connected' ? 'success' : 'neutral'}
           />
-          <p>连接状态仅代表基础 API 可用，业务功能仍待接入。</p>
+          <p>支持资料管理、岗位分析和计划确认；真实分析需模型与开发依赖就绪。</p>
           <a href={api.docsUrl} target="_blank" rel="noreferrer">
             打开 API 文档 <span aria-hidden="true">↗</span>
           </a>
@@ -526,9 +526,7 @@ export default function App() {
                   </svg>
                 </div>
                 <h3>添加个人资料</h3>
-                <p className="muted">
-                  M1 支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。
-                </p>
+                <p className="muted">支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。</p>
                 <DocumentUpload
                   key={user?.id ?? 'anonymous'}
                   userId={user?.id}
@@ -561,7 +559,16 @@ export default function App() {
               </div>
             </div>
             <DocumentManager
+              key={user?.id ?? 'anonymous'}
               userId={user?.id}
+              onUpdated={(id) => {
+                if (analysis?.document_versions.some((pin) => pin.document_id === id)) {
+                  const stale = { ...analysis, stale: true };
+                  setAnalysis(stale);
+                  setAnalysisStale(true);
+                  sessionStorage.setItem(ANALYSIS_KEY, JSON.stringify(stale));
+                }
+              }}
               onDeleted={(id) => {
                 setDocumentIds((prev) => prev.filter((item) => item !== id));
                 try {
@@ -686,7 +693,7 @@ export default function App() {
             </p>
             {analysisStale && (
               <p className="error-text small" role="status">
-                岗位 JD 已更新，上次分析可能已过期；请重新分析后再生成计划。
+                岗位或资料已更新，上次分析已过期；请重新分析后再生成计划。
               </p>
             )}
           </section>
@@ -715,7 +722,7 @@ export default function App() {
                 }
                 setAnalysis(result);
                 setHasRealAnalysis(result !== null);
-                setAnalysisStale(false);
+                setAnalysisStale(result?.stale ?? false);
                 if (result) setAnalysisVisible(false);
               }}
               initialAnalysis={analysis}

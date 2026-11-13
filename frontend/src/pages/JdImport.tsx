@@ -161,6 +161,14 @@ export default function JdImport({
   phaseRef.current = phase;
 
   useEffect(() => {
+    if (initialAnalysis?.stale) {
+      setAnalysis((current) =>
+        current?.id === initialAnalysis.id ? { ...current, stale: true } : current,
+      );
+    }
+  }, [initialAnalysis?.id, initialAnalysis?.stale]);
+
+  useEffect(() => {
     onAnalysisRef.current = onAnalysis;
   }, [onAnalysis]);
 
