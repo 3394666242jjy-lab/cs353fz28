@@ -2,7 +2,7 @@
 
 CS353FZ 五人团队项目。面向大学生实习求职，结合个人经历、目标岗位和检索到的知识资料，提供有依据的岗位分析、准备计划和模拟面试。
 
-当前阶段：M2 本地功能已补齐，包含资料版本更新/删除、JD 编辑、追问与持久化恢复、准备计划草稿及幂等确认、SSE 回放、Outbox 和三档检索。真实服务与浏览器记录见 [M2 集成验收](dev/15-M2集成验收-m2-completion.md)。运行真实流程需配置 MongoDB 副本集、Redis、Qdrant、Embedding 和生成模型；样例演练不代表真实模型结果。云端部署、M3 看板/模拟面试与 OCR 属于后续范围，合并状态以 GitHub PR 为准。
+当前阶段：M2 本地闭环已完成，正在推进 **M3 Agent 架构与 RAG 知识底座**，覆盖 **AI 产品经理、全栈开发、Agent 开发**。本轮 M3.1 提供架构设计、结构化切分与证据隔离原型、13 个一手知识来源的中文整理摘要及可复现切分评测；公共知识在线入库、生产双通道接线与原生图恢复迁移仍待后续实现。详情见 [M3 核心计划](dev/16-M3核心架构与实施计划-m3-core.md)、[M3 切分实测](dev/17-M3切分与知识库基线-m3-rag.md)；M2 真实运行证据见 [M2 集成验收](dev/15-M2集成验收-m2-completion.md)。
 
 ## 从这里开始
 
@@ -10,7 +10,7 @@ CS353FZ 五人团队项目。面向大学生实习求职，结合个人经历、
 2. 阅读 [M1 开工计划](dev/08-M1开工计划-kickoff-plan.md)，使用 [合成样例](examples/README.md) 对齐契约；只索引原始简历和项目说明。
 3. 按启动指南配置本地依赖、模型和种子账号，再用独立合成资料验证完整流程；当前运行条件、检索迁移和实际结果见 [M2 集成验收](dev/15-M2集成验收-m2-completion.md)。
 
-**M2 流程：上传与管理资料 → 保存/编辑 JD → 检索分析及原文引用 → 按需追问与恢复 → 生成计划草稿 → 明确确认保存任务。** PDF 引用定位到原文件页码；当前严格模式拒绝含图片、矢量绘制等无法可靠核验内容的 PDF，带头像或装饰的文件可能需要转为纯文字 PDF、TXT 或 Markdown。扫描件 OCR、模拟面试和云端部署留作后续。
+**当前可运行的 M2 流程：上传与管理资料 → 保存/编辑 JD → 检索分析及原文引用 → 按需追问与恢复 → 生成计划草稿 → 明确确认保存任务。** PDF 引用定位到原文件页码；当前严格模式拒绝含图片、矢量绘制等无法可靠核验内容的 PDF，带头像或装饰的文件可能需要转为纯文字 PDF、TXT 或 Markdown。M3 的看板与模拟面试后移到基础架构验证之后；扫描件 OCR 和云端部署另行安排。
 
 ## 技术与部署方案
 
@@ -45,7 +45,7 @@ P0/P1 表示最终交付优先级；实现顺序另按里程碑划分：
 | --- | --- | --- |
 | M1 最小流程 | 有文本层 PDF 与 Markdown/TXT 上传、Python 解析、JD 导入、真实向量检索、匹配分析和页码/行号引用 | 本地合成数据；最小任务分发与轮询；缺失信息记入结果，不暂停追问 |
 | M2 完善 P0 | 资料更新/删除、准备计划确认、SSE、状态恢复与队列可靠性，比较混合检索/Rerank | 负责人确认验收后准备云端发布；扫描件 OCR 另作扩展 |
-| M3 P1 扩展 | 任务进度看板、文本模拟面试与反馈 | 按团队进度扩展，不阻塞 M1 |
+| M3 核心能力 | Agent 状态/工具/恢复架构、RAG 结构切分、三方向知识素材与双通道检索 | 先完成架构与知识底座，再以看板/文本面试验证；当前为 M3.1 基础原型 |
 
 本页技术栈描述总体目标，M1 的必要组件、接口和数据集合以 [开工计划](dev/08-M1开工计划-kickoff-plan.md) 为准。
 
@@ -83,7 +83,26 @@ M1 任务：负责人 [#5](https://github.com/3394666242jjy-lab/cs353fz28/issues
 | C RAG | [Dickson666](https://github.com/Dickson666) | [#25 资料生命周期与检索增强评测](https://github.com/3394666242jjy-lab/cs353fz28/issues/25) |
 | D Agent | [devaultlambing-bot](https://github.com/devaultlambing-bot) | [#26 持久化恢复与准备计划](https://github.com/3394666242jjy-lab/cs353fz28/issues/26) |
 
-M2 先对齐资料版本、计划确认、事件与恢复契约，再进行跨模块联调。计划事务与 Outbox 需要支持事务的 MongoDB 环境；本地开发骨架不等同正式部署。任务看板、模拟面试属于 M3，OCR 为后续扩展。
+M2 已完成资料版本、计划确认、事件与恢复联调，计划事务与 Outbox 需要支持事务的 MongoDB。M3 将重心放在下述 Agent/RAG 核心能力，任务看板与模拟面试作为后续应用验证，OCR 为扩展。
+
+## M3 当前主线
+
+| 主线 | 本轮已有 | 下一步 |
+| --- | --- | --- |
+| Agent 架构 | 当前实现审计、目标状态图、岗位/意图路由与个人证据/公共参考隔离原型 | 双通道在线接线、原生 checkpointer 兼容性与重启迁移验证 |
+| RAG 切分 | 标题层级、代码/表格保护、精确 span、父子元数据与配置版本；18 问结构诊断及真实 Embedding 比较 | 扩充复杂材料和独立评价集，再决定是否迁移默认索引 |
+| 知识库素材 | [13 个官方/一手来源与中文摘要](knowledge/README.md)，带岗位标签、版本、来源链接和内容指纹 | 版本化公共索引、审核发布/撤回、原文定位与在线检索 |
+
+AI 产品经理优先覆盖需求、指标、评价与人机信任；全栈优先覆盖组件状态、HTTP/API、数据事务和部署；Agent 优先覆盖工作流、工具契约、检索、记忆与恢复。公共知识仅用于解释与学习建议，不能冒充个人经历证据。
+
+```powershell
+uv run --project backend python scripts/m3_knowledge_demo.py --catalog --role ai_product_manager
+uv run --project backend python scripts/m3_knowledge_demo.py --role fullstack --query "Fetch HTTP 取消"
+uv run --project backend python scripts/m3_knowledge_demo.py --role agent_engineer --query "checkpoint 恢复 幂等"
+uv run --project backend python scripts/m3_chunking_eval.py --mode lexical --output tmp/m3-lexical.json
+```
+
+知识演示是按岗位过滤的本地词法原型，不是已上线公共 RAG。真实 Embedding 实测中，结构600保住 3/3 个代码/表格块，首位 span 命中与 M2 持平；300 小块出现退化，600/900 在本组样本无法区分。小样本不能代表整体准确率或最优切分参数。当前仍保留 M2 默认解析/索引，完整记录与限制见 M3 文档。关联任务：[Issue #34](https://github.com/3394666242jjy-lab/cs353fz28/issues/34)。
 
 ## 模块协作
 
