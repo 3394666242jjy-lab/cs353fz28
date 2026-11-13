@@ -1,0 +1,132 @@
+{
+  "chunk_max_chars": 500,
+  "questions_sha256": "46c987b06e0e790200eff1b80188cab7134c8e9f75adbb8e52fdf6b72526b0d1",
+  "documents": [
+    {
+      "document_id": "doc_alpha_resume",
+      "user_id": "user_eval_alpha",
+      "version": 1,
+      "path": "alpha_resume.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_alpha_project_a",
+      "user_id": "user_eval_alpha",
+      "version": 1,
+      "path": "alpha_project_a.v1.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_alpha_project_a",
+      "user_id": "user_eval_alpha",
+      "version": 2,
+      "path": "alpha_project_a.v2.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_alpha_project_b",
+      "user_id": "user_eval_alpha",
+      "version": 1,
+      "path": "alpha_project_b.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_alpha_notes",
+      "user_id": "user_eval_alpha",
+      "version": 1,
+      "path": "alpha_interview_notes.txt",
+      "file_type": ".txt"
+    },
+    {
+      "document_id": "doc_alpha_cert",
+      "user_id": "user_eval_alpha",
+      "version": 1,
+      "path": "alpha_certificate.pdf",
+      "file_type": ".pdf"
+    },
+    {
+      "document_id": "doc_beta_resume",
+      "user_id": "user_eval_beta",
+      "version": 1,
+      "path": "beta_resume.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_beta_project_a",
+      "user_id": "user_eval_beta",
+      "version": 1,
+      "path": "beta_project_a.v1.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_beta_project_a",
+      "user_id": "user_eval_beta",
+      "version": 2,
+      "path": "beta_project_a.v2.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_beta_project_b",
+      "user_id": "user_eval_beta",
+      "version": 1,
+      "path": "beta_project_b.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_beta_notes",
+      "user_id": "user_eval_beta",
+      "version": 1,
+      "path": "beta_interview_notes.txt",
+      "file_type": ".txt"
+    },
+    {
+      "document_id": "doc_beta_cert",
+      "user_id": "user_eval_beta",
+      "version": 1,
+      "path": "beta_certificate.pdf",
+      "file_type": ".pdf"
+    },
+    {
+      "document_id": "doc_gamma_resume",
+      "user_id": "user_eval_gamma",
+      "version": 1,
+      "path": "gamma_resume.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_gamma_project_a",
+      "user_id": "user_eval_gamma",
+      "version": 1,
+      "path": "gamma_project_a.v1.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_gamma_project_a",
+      "user_id": "user_eval_gamma",
+      "version": 2,
+      "path": "gamma_project_a.v2.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_gamma_project_b",
+      "user_id": "user_eval_gamma",
+      "version": 1,
+      "path": "gamma_project_b.md",
+      "file_type": ".md"
+    },
+    {
+      "document_id": "doc_gamma_notes",
+      "user_id": "user_eval_gamma",
+      "version": 1,
+      "path": "gamma_interview_notes.txt",
+      "file_type": ".txt"
+    },
+    {
+      "document_id": "doc_gamma_cert",
+      "user_id": "user_eval_gamma",
+      "version": 1,
+      "path": "gamma_certificate.pdf",
+      "file_type": ".pdf"
+    }
+  ]
+}

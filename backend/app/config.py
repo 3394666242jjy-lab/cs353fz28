@@ -70,6 +70,32 @@ class Settings(BaseSettings):
     # 证据检索（成员 C）：默认返回的候选片段数。
     retrieval_top_k: int = Field(default=5, ge=1, le=100)
 
+    # 检索策略（成员 C，M2，issue #25）：三档可复现对比的开关。dense 是 M1 基线，
+    # hybrid 叠加关键词稀疏召回，hybrid_rerank 再对候选重排。策略名连同模型版本
+    # 进入 retrieval_config_version，任何一项变化都产生新版本号，不覆盖旧结果。
+    retrieval_strategy: Literal["dense", "hybrid", "hybrid_rerank"] = "dense"
+    # 混合检索融合权重：稀疏通道占比 w，稠密通道占 1-w（各档必须在同一 w 下比较）。
+    # 0.30 由开发集扫描得出（dev/13 第 4 节）：0.30/0.50/0.70 三档在 12 条开发集
+    # 问题上只相差 1 道题，样本量不足以证明"更优"，取 0.30 是"数据指向 + 机制一致"
+    # 的结果而非统计结论；扩充开发集后应重新确认。
+    hybrid_sparse_weight: float = Field(default=0.30, gt=0.0, lt=1.0)
+    # 每个通道在融合前各自召回的候选数；应大于等于 retrieval_top_k 才谈得上重排空间。
+    hybrid_candidates_per_channel: int = Field(default=20, ge=1, le=200)
+
+    # Rerank 服务（成员 C，M2）：只服务于 hybrid_rerank 档位。未配置时必须显式报错，
+    # 不得静默降级——把未重排的结果记成重排结果会污染评测结论。
+    # 使用阿里云百炼的**原生** rerank 端点（兼容端点没有 /rerank 路径）；
+    # 密钥留空时回退到 EMBEDDING_API_KEY，因为两者本就共用同一个百炼 Key。
+    rerank_url: str = (
+        "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    )
+    rerank_api_key: SecretStr | None = None
+    # 账号可用的重排模型；qwen-rerank 在部分账号上返回 403（未开通），需按账号实测。
+    rerank_model: str = "gte-rerank-v2"
+    rerank_timeout_seconds: float = Field(default=15.0, ge=0.1, le=60.0)
+    rerank_max_retries: int = Field(default=2, ge=0, le=5)
+    rerank_retry_backoff_seconds: float = Field(default=0.5, ge=0.1, le=10.0)
+
 
 @lru_cache
 def get_settings() -> Settings:

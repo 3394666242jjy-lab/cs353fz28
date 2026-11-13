@@ -12,8 +12,15 @@ import httpx
 import pytest
 
 from app.config import Settings
+from app.rag.bm25 import Bm25Encoder
 from app.rag.embeddings import EmbeddingError, HttpEmbeddingProvider
-from app.rag.retrieval import EvidenceQueryResult, QdrantEvidenceSource, get_evidence_source
+from app.rag.retrieval import (
+    EvidenceQueryResult,
+    QdrantEvidenceSource,
+    build_retrieval_config_version,
+    fuse_hits,
+    get_evidence_source,
+)
 from app.rag.vector_store import QdrantVectorStore
 from app.schemas.analysis import DocumentVersion
 
@@ -53,7 +60,7 @@ def hit(chunk_id: str, score: float, version: int = 1) -> dict:
     }
 
 
-def source(hits: list[dict], *, embedding_status: int = 200):
+def source(hits: list[dict], *, embedding_status: int = 200, **overrides):
     """构建被测候选源（真实适配器）并返回请求记录列表。"""
     calls: list[httpx.Request] = []
 
@@ -79,7 +86,7 @@ def source(hits: list[dict], *, embedding_status: int = 200):
         raise AssertionError(f"unexpected request: {url}")
 
     transport = httpx.MockTransport(handler)
-    config = settings()
+    config = settings(**overrides)
     embedder = HttpEmbeddingProvider(config, transport=transport)
     store = QdrantVectorStore(config, transport=transport)
     return QdrantEvidenceSource(config, embedder=embedder, store=store), calls
@@ -190,6 +197,46 @@ def test_default_top_k_comes_from_settings():
     assert search_body(calls)["limit"] == settings().retrieval_top_k
 
 
+def test_retrieval_config_version_format_is_frozen_for_three_strategies():
+    """三档策略的版本号格式在此冻结：评测比较必须能据此判断是否同一条件。"""
+    dense = build_retrieval_config_version(
+        strategy="dense", model_version="text-embedding-v4", dimension=1024, top_k=5
+    )
+    hybrid = build_retrieval_config_version(
+        strategy="hybrid",
+        model_version="text-embedding-v4",
+        dimension=1024,
+        top_k=5,
+        sparse_weight=0.5,
+    )
+    reranked = build_retrieval_config_version(
+        strategy="hybrid_rerank",
+        model_version="text-embedding-v4",
+        dimension=1024,
+        top_k=5,
+        sparse_weight=0.5,
+        rerank_model="gte-rerank",
+    )
+
+    assert dense == "dense/text-embedding-v4@1024/top5"
+    assert hybrid == "hybrid/w0.50/text-embedding-v4@1024/top5"
+    assert reranked == "hybrid_rerank/gte-rerank/w0.50/text-embedding-v4@1024/top5"
+
+
+def test_retrieval_config_version_rejects_incomplete_strategy_parameters():
+    """缺权重或缺 rerank 模型时拒绝生成版本号，避免产出无法复现的"已重排"记录。"""
+    with pytest.raises(ValueError):
+        build_retrieval_config_version(strategy="hybrid", model_version="m", dimension=64, top_k=5)
+    with pytest.raises(ValueError):
+        build_retrieval_config_version(
+            strategy="hybrid_rerank",
+            model_version="m",
+            dimension=64,
+            top_k=5,
+            sparse_weight=0.5,
+        )
+
+
 def test_repeated_query_is_deterministic():
     """同一查询重复执行结果一致。"""
     adapter, _ = source([hit("chunk_a", 0.61), hit("chunk_b", 0.31)])
@@ -198,3 +245,256 @@ def test_repeated_query_is_deterministic():
     second = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="Redis 缓存"))
 
     assert first == second
+
+
+def dense_hits(**scores: float) -> list:
+    """按 chunk_id -> 分数构造稠密通道命中。"""
+    from app.rag.vector_store import SearchHit
+
+    return [
+        SearchHit(
+            chunk_id=chunk_id,
+            document_id="doc_demo",
+            version=1,
+            corpus="personal",
+            score=score,
+        )
+        for chunk_id, score in scores.items()
+    ]
+
+
+def test_fuse_hits_normalises_channels_before_weighting():
+    """两路分数数量级不同，必须先各自归一再加权，否则 BM25 会通吃。"""
+    dense = dense_hits(a=0.80, b=0.60)
+    sparse = dense_hits(a=12.0, c=6.0)
+
+    fused = {hit.chunk_id: hit.score for hit in fuse_hits(dense, sparse, sparse_weight=0.5)}
+
+    assert fused["a"] == pytest.approx(0.5 * 1.0 + 0.5 * 1.0)
+    assert fused["b"] == pytest.approx(0.5 * 0.0 + 0.5 * 0.0)
+    assert fused["c"] == pytest.approx(0.5 * 0.0 + 0.5 * 0.0)
+
+
+def test_fuse_hits_prefers_channel_where_weight_is_higher():
+    """通道权重决定偏向：稀疏权重高时，只在稀疏通道命中的候选应排在前面。"""
+    dense = dense_hits(only_dense=0.90, both=0.50)
+    sparse = dense_hits(only_sparse=9.0, both=1.0)
+
+    top = fuse_hits(dense, sparse, sparse_weight=0.9)[0]
+
+    assert top.chunk_id in {"both", "only_sparse"}
+    assert top.chunk_id != "only_dense"
+
+
+def test_fuse_hits_is_deterministic_on_ties():
+    """分数相同时按 chunk_id 决定顺序，同一输入两次运行必须一致。"""
+    dense = dense_hits(b=0.5)
+    sparse = dense_hits(a=5.0)
+
+    first = [hit.chunk_id for hit in fuse_hits(dense, sparse, sparse_weight=0.5)]
+    second = [hit.chunk_id for hit in fuse_hits(dense, sparse, sparse_weight=0.5)]
+
+    assert first == second == ["a", "b"]
+
+
+def test_fuse_hits_rejects_degenerate_weights():
+    """权重取 0 或 1 等于关掉一路通道，应显式报错而不是静默退化成单通道。"""
+    with pytest.raises(ValueError):
+        fuse_hits([], [], sparse_weight=0.0)
+    with pytest.raises(ValueError):
+        fuse_hits([], [], sparse_weight=1.0)
+
+
+class StubRerank:
+    """测试用重排 provider：按构造好的顺序与分数返回，接口与真实适配器一致。"""
+
+    model_version = "gte-rerank-v2"
+
+    def __init__(self, order: list[tuple[str, float]], documents: list[str] | None = None):
+        self._order = order
+        self._documents = documents
+        self.calls: list[dict] = []
+
+    async def rerank(self, *, query: str, documents: list[str], top_n: int | None = None):
+        self.calls.append({"query": query, "documents": list(documents), "top_n": top_n})
+        if self._documents is not None:
+            assert documents == self._documents
+        index_of = {text: index for index, text in enumerate(documents)}
+        return [(index_of[text], score) for text, score in self._order if text in index_of]
+
+
+def hybrid_adapter(*, dense, sparse, texts, order):
+    """构造一个 hybrid_rerank 适配器：两路检索与原文解析都用桩实现。"""
+    config = settings(
+        retrieval_strategy="hybrid_rerank",
+        hybrid_candidates_per_channel=10,
+        hybrid_sparse_weight=0.5,
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == EMBEDDING_URL:
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [0.01] * DIMENSION}]}
+            )
+        body = json.loads(request.content)
+        if body["vector"]["name"] == "sparse":
+            return httpx.Response(200, json={"result": sparse})
+        return httpx.Response(200, json={"result": dense})
+
+    transport = httpx.MockTransport(handler)
+
+    async def resolver(chunk_ids: list[str]) -> dict[str, str]:
+        return {chunk_id: texts[chunk_id] for chunk_id in chunk_ids if chunk_id in texts}
+
+    return QdrantEvidenceSource(
+        config,
+        embedder=HttpEmbeddingProvider(config, transport=transport),
+        store=QdrantVectorStore(config, transport=transport),
+        sparse_encoder=Bm25Encoder(idf={"缓存": 1.0}, avg_doc_len=2.0),
+        rerank_provider=StubRerank(order),
+        text_resolver=resolver,
+    )
+
+
+def test_hybrid_strategy_queries_both_channels_and_reports_weight():
+    """混合策略：两路各取候选后融合，配置版本号带上通道权重。"""
+    encoder = Bm25Encoder(idf={"缓存": 1.5, "命中": 1.5}, avg_doc_len=4.0)
+    # 显式钉住权重：本用例验证融合与版本号格式，不应随默认值调整而变化。
+    config = settings(
+        retrieval_strategy="hybrid", hybrid_candidates_per_channel=10, hybrid_sparse_weight=0.5
+    )
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        url = str(request.url)
+        if url == EMBEDDING_URL:
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [0.01] * DIMENSION}]}
+            )
+        if url == SEARCH_URL:
+            body = json.loads(request.content)
+            name = body["vector"]["name"]
+            if name == "sparse":
+                return httpx.Response(200, json={"result": [hit("from_sparse", 9.0)]})
+            return httpx.Response(200, json={"result": [hit("from_dense", 0.9)]})
+        raise AssertionError(f"unexpected request: {url}")
+
+    transport = httpx.MockTransport(handler)
+    adapter = QdrantEvidenceSource(
+        config,
+        embedder=HttpEmbeddingProvider(config, transport=transport),
+        store=QdrantVectorStore(config, transport=transport),
+        sparse_encoder=encoder,
+    )
+
+    result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))
+
+    names = [json.loads(c.content)["vector"]["name"] for c in calls if str(c.url) == SEARCH_URL]
+    assert names == ["dense", "sparse"]
+    assert {item.chunk_id for item in result.evidence} == {"from_dense", "from_sparse"}
+    assert result.retrieval_config_version == "hybrid/w0.50/text-embedding-v4@64/top5"
+
+
+def test_hybrid_strategy_uses_identical_filters_on_both_channels():
+    """两路必须共用同一套用户与版本过滤，否则隔离条件会在某一路失守。"""
+    encoder = Bm25Encoder(idf={"缓存": 1.5}, avg_doc_len=4.0)
+    config = settings(retrieval_strategy="hybrid")
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        if str(request.url) == EMBEDDING_URL:
+            return httpx.Response(
+                200, json={"data": [{"index": 0, "embedding": [0.01] * DIMENSION}]}
+            )
+        return httpx.Response(200, json={"result": []})
+
+    transport = httpx.MockTransport(handler)
+    adapter = QdrantEvidenceSource(
+        config,
+        embedder=HttpEmbeddingProvider(config, transport=transport),
+        store=QdrantVectorStore(config, transport=transport),
+        sparse_encoder=encoder,
+    )
+    versions = [DocumentVersion(document_id="doc_demo", version=1)]
+
+    asyncio.run(
+        adapter.retrieve_evidence(user_id="user_c", query="缓存", document_versions=versions)
+    )
+
+    bodies = [json.loads(c.content) for c in calls if str(c.url) == SEARCH_URL]
+    assert len(bodies) == 2
+    assert bodies[0]["filter"] == bodies[1]["filter"]
+
+
+def test_hybrid_without_encoder_fails_instead_of_falling_back_to_dense():
+    """缺 IDF 语料时不得偷偷退回稠密检索——否则结果会被当成交付的混合结果。"""
+    adapter, _ = source([hit("chunk_a", 0.5)], retrieval_strategy="hybrid")
+
+    with pytest.raises(RuntimeError, match="BM25 编码器"):
+        asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存"))
+
+
+def test_hybrid_rerank_requires_a_text_resolver():
+    """重排需要候选原文；未注入解析器时必须报错，不能静默跳过重排。"""
+    adapter, _ = source([hit("chunk_a", 0.5)], retrieval_strategy="hybrid_rerank")
+
+    with pytest.raises(RuntimeError, match="原文解析器"):
+        asyncio.run(
+            QdrantEvidenceSource(
+                adapter._settings,
+                embedder=adapter._embedder,
+                store=adapter._store,
+                sparse_encoder=Bm25Encoder(idf={"缓存": 1.0}, avg_doc_len=2.0),
+                rerank_provider=StubRerank(order=[]),
+                text_resolver=None,
+            ).retrieve_evidence(user_id="user_c", query="缓存")
+        )
+
+
+def test_hybrid_rerank_reorders_candidates_by_provider_scores():
+    """重排按 provider 给出的分数排序，配置版本号带上 rerank 模型名。"""
+    adapter = hybrid_adapter(
+        dense=[hit("chunk_a", 0.9), hit("chunk_b", 0.5)],
+        sparse=[hit("chunk_a", 3.0)],
+        texts={"chunk_a": "缓存命中率 60%", "chunk_b": "缓存命中率 92%"},
+        # 让 provider 把原始排第二的候选（92% 那段）排到第一。
+        order=[("缓存命中率 92%", 0.95), ("缓存命中率 60%", 0.10)],
+    )
+
+    result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))
+
+    assert [item.chunk_id for item in result.evidence] == ["chunk_b", "chunk_a"]
+    assert result.evidence[0].retrieval_score == pytest.approx(0.95)
+    assert result.retrieval_config_version == (
+        "hybrid_rerank/gte-rerank-v2/w0.50/text-embedding-v4@64/top5"
+    )
+
+
+def test_hybrid_rerank_excludes_candidates_without_resolved_text():
+    """缺原文的候选不能打分：排除并给出告警，而不是假装它排在后面。"""
+    adapter = hybrid_adapter(
+        dense=[hit("chunk_a", 0.9), hit("chunk_b", 0.5)],
+        sparse=[hit("chunk_a", 3.0)],
+        texts={"chunk_b": "缓存命中率 92%"},
+        order=[("缓存命中率 92%", 0.9)],
+    )
+
+    result = asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))
+
+    assert [item.chunk_id for item in result.evidence] == ["chunk_b"]
+    assert any("缺少原文" in warning for warning in result.warnings)
+
+
+def test_hybrid_rerank_fails_when_no_candidate_has_text():
+    """整批候选都缺原文时重排无法进行，必须报错而不是返回未重排结果。"""
+    adapter = hybrid_adapter(
+        dense=[hit("chunk_a", 0.9)],
+        sparse=[hit("chunk_a", 3.0)],
+        texts={},
+        order=[],
+    )
+
+    with pytest.raises(RuntimeError, match="无法重排"):
+        asyncio.run(adapter.retrieve_evidence(user_id="user_c", query="缓存命中率"))
