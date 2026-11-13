@@ -1,12 +1,12 @@
 # CareerPilot 技术架构
 
-状态：v0.4 技术设计与 M1 契约候选版。开发骨架已建立，业务闭环与云端部署尚未完成；运行和已实现边界见 [09 本地启动指南](09-本地开发启动-local-setup.md)。负责人拥有架构决策权；各成员记录变更理由、影响和迁移方式。
+状态：M2 本地实施版。资料/JD 管理、分析、追问恢复、准备计划确认与可靠任务闭环已实现，运行边界和真实验证见 [M2 集成验收](15-M2集成验收-m2-completion.md) 与 [09 本地启动指南](09-本地开发启动-local-setup.md)。OSS 与云端部署留待部署阶段；负责人拥有架构决策权，各成员记录变更理由、影响和迁移方式。
 
 ## M1 必要子集
 
 本篇表格和系统图描述总体目标。首轮只连接 React/TS、FastAPI/Pydantic、MongoDB、最小 Celery/Redis、LangGraph 基本流程、Embedding 与 Qdrant 向量检索。文件使用本地私有目录，前端通过任务查询轮询；处理有文本层 PDF、UTF-8 Markdown/TXT 和个人经历证据，缺失信息写入结果，不触发 interrupt。
 
-OSS、混合检索、Rerank、SSE、持久化用户恢复与完整 Outbox 补偿在 M2，计划和面试按 PRD 阶段推进；扫描件 OCR 留作扩展。M1 的 Celery 发布失败必须转为可查询错误，但不宣称已具备完整的跨进程可靠性。完整规范属于后续交付目标，不能要求 A–D 在首轮同时完成所有组件。样例与任务见 [examples](../examples/README.md) 和 [M1 开工计划](08-M1开工计划-kickoff-plan.md)。
+M2 已加入混合检索、Rerank、鉴权 SSE、单机暂停点恢复、Outbox 重投与幂等计划确认。OSS、云端部署、多机 checkpoint、模拟面试和 OCR 属后续范围。下文 M1 子集保留阶段演进记录；当前行为见集成验收。样例与任务见 [examples](../examples/README.md) 和 [M1 开工计划](08-M1开工计划-kickoff-plan.md)。
 
 PDF 解析在 Python 后端完成：B 校验上传、私有存储并分发 Worker 任务，C 在 backend/app/rag 实现逐页提取、页内切分及索引，B 持久化提取结果和 chunk 元数据。PDF chunk 不跨页，locator 使用原 PDF 的 1 起始页码，空白页不导致后续页码重排；quote 来自该页实际提取文本。损坏、需要密码、无文本层或含无法提取扫描内容的 PDF 明确失败，不以空结果标记 ready；Markdown/TXT 保留行号。依赖进入 pyproject.toml/uv.lock，解析不在浏览器或 FastAPI 请求线程内执行。具体交付和失败语义见 08 的 PDF 小节。
 
