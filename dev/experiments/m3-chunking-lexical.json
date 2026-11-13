@@ -1,0 +1,1595 @@
+{
+  "split": "synthetic-development",
+  "mode": "lexical",
+  "questions": 18,
+  "source_hashes": [
+    {
+      "role": "ai_product_manager",
+      "path": "ai_product_manager.md",
+      "sha256": "8bbfa5118833a67217b974233b3afe3fd919bd657def6e59e2a7936daecad0f3"
+    },
+    {
+      "role": "fullstack",
+      "path": "fullstack.md",
+      "sha256": "4ba0dfb214582083f4f2ea11d0fb488bc2125154db1af48363a7ba1dc746aaf5"
+    },
+    {
+      "role": "agent_engineer",
+      "path": "agent_engineer.md",
+      "sha256": "e20f4b16065d47e8159ea008620eea2ed6dd37b8bda9965e2aff65b697cc917c"
+    }
+  ],
+  "limitations": "Three synthetic development documents; recall means a labeled source span is present. No generation, production Qdrant, held-out testing or overall model accuracy is measured.",
+  "policies": {
+    "m2-paragraph-600": {
+      "metrics": {
+        "chunks": 6,
+        "exact_quotes": true,
+        "non_whitespace_coverage": 1.0,
+        "atomic_blocks": 3,
+        "atomic_blocks_intact": 0,
+        "target_chars": 600,
+        "p50_chars": 445.5,
+        "max_chars": 611,
+        "above_target": 2,
+        "hard_limit_violations": 0,
+        "span_recall_at_1": 0.9444444444444444,
+        "span_recall_at_3": 1.0,
+        "mrr": 0.9722222222222222
+      },
+      "questions": [
+        {
+          "question_id": "ai_product_manager-1",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 611
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 927
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-2",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 611
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 927
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-3",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 611
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 927
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-4",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 927
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 611
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-5",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 927
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 611
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-6",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 927
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 611
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-1",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 576
+            },
+            {
+              "document": "fullstack.md",
+              "start": 578,
+              "end": 893
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-2",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 576
+            },
+            {
+              "document": "fullstack.md",
+              "start": 578,
+              "end": 893
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-3",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 576
+            },
+            {
+              "document": "fullstack.md",
+              "start": 578,
+              "end": 893
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-4",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 578,
+              "end": 893
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 576
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-5",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 578,
+              "end": 893
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 576
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-6",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 578,
+              "end": 893
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 576
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-1",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 602
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 604,
+              "end": 865
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-2",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 602
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 604,
+              "end": 865
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-3",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 602
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 604,
+              "end": 865
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-4",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 602
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 604,
+              "end": 865
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-5",
+          "role": "agent_engineer",
+          "first_relevant_rank": 2,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 602
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 604,
+              "end": 865
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-6",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 604,
+              "end": 865
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 602
+            }
+          ]
+        }
+      ]
+    },
+    "m3-structure-300": {
+      "metrics": {
+        "chunks": 18,
+        "exact_quotes": true,
+        "non_whitespace_coverage": 1.0,
+        "atomic_blocks": 3,
+        "atomic_blocks_intact": 3,
+        "target_chars": 300,
+        "p50_chars": 127.5,
+        "max_chars": 311,
+        "above_target": 1,
+        "hard_limit_violations": 0,
+        "span_recall_at_1": 0.8888888888888888,
+        "span_recall_at_3": 1.0,
+        "mrr": 0.9444444444444444
+      },
+      "questions": [
+        {
+          "question_id": "ai_product_manager-1",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 391
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-2",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 391
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 392,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-3",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 2,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 391
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 392,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-4",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 391
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-5",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-6",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 392,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-1",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            },
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-2",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 175,
+              "end": 329
+            },
+            {
+              "document": "fullstack.md",
+              "start": 330,
+              "end": 641
+            },
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-3",
+          "role": "fullstack",
+          "first_relevant_rank": 2,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 175,
+              "end": 329
+            },
+            {
+              "document": "fullstack.md",
+              "start": 330,
+              "end": 641
+            },
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-4",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 175,
+              "end": 329
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-5",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-6",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-1",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 46
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-2",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 522
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-3",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 522
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 523,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-4",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 522
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 523,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-5",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 523,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 522
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-6",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 742,
+              "end": 866
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 522
+            }
+          ]
+        }
+      ]
+    },
+    "m3-structure-600": {
+      "metrics": {
+        "chunks": 15,
+        "exact_quotes": true,
+        "non_whitespace_coverage": 1.0,
+        "atomic_blocks": 3,
+        "atomic_blocks_intact": 3,
+        "target_chars": 600,
+        "p50_chars": 126,
+        "max_chars": 466,
+        "above_target": 0,
+        "hard_limit_violations": 0,
+        "span_recall_at_1": 1.0,
+        "span_recall_at_3": 1.0,
+        "mrr": 1.0
+      },
+      "questions": [
+        {
+          "question_id": "ai_product_manager-1",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 52
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-2",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-3",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 52
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-4",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-5",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-6",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-1",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            },
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-2",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 175,
+              "end": 641
+            },
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-3",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 175,
+              "end": 641
+            },
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-4",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            },
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-5",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-6",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-1",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 46
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-2",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-3",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-4",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-5",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-6",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 742,
+              "end": 866
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            }
+          ]
+        }
+      ]
+    },
+    "m3-structure-900": {
+      "metrics": {
+        "chunks": 15,
+        "exact_quotes": true,
+        "non_whitespace_coverage": 1.0,
+        "atomic_blocks": 3,
+        "atomic_blocks_intact": 3,
+        "target_chars": 900,
+        "p50_chars": 126,
+        "max_chars": 466,
+        "above_target": 0,
+        "hard_limit_violations": 0,
+        "span_recall_at_1": 1.0,
+        "span_recall_at_3": 1.0,
+        "mrr": 1.0
+      },
+      "questions": [
+        {
+          "question_id": "ai_product_manager-1",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 52
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-2",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-3",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 0,
+              "end": 52
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-4",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-5",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 613,
+              "end": 827
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            }
+          ]
+        },
+        {
+          "question_id": "ai_product_manager-6",
+          "role": "ai_product_manager",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "ai_product_manager.md",
+              "start": 828,
+              "end": 928
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 279,
+              "end": 612
+            },
+            {
+              "document": "ai_product_manager.md",
+              "start": 53,
+              "end": 278
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-1",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            },
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-2",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 175,
+              "end": 641
+            },
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-3",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 175,
+              "end": 641
+            },
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-4",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            },
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-5",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 642,
+              "end": 768
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            }
+          ]
+        },
+        {
+          "question_id": "fullstack-6",
+          "role": "fullstack",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "fullstack.md",
+              "start": 769,
+              "end": 894
+            },
+            {
+              "document": "fullstack.md",
+              "start": 0,
+              "end": 44
+            },
+            {
+              "document": "fullstack.md",
+              "start": 45,
+              "end": 174
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-1",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 0,
+              "end": 46
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-2",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-3",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-4",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-5",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 177,
+              "end": 283
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            }
+          ]
+        },
+        {
+          "question_id": "agent_engineer-6",
+          "role": "agent_engineer",
+          "first_relevant_rank": 1,
+          "top3": [
+            {
+              "document": "agent_engineer.md",
+              "start": 742,
+              "end": 866
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 47,
+              "end": 176
+            },
+            {
+              "document": "agent_engineer.md",
+              "start": 284,
+              "end": 741
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
