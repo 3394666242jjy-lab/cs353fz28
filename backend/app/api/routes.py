@@ -38,6 +38,7 @@ from app.schemas.resources import (
     JobCreate,
     JobCreated,
     JobResult,
+    JobUpdate,
     LoginRequest,
     PlanConfirmed,
     PlanCreate,
@@ -80,7 +81,7 @@ from app.services.executions import (
 )
 from app.services.executions import get_execution as executions_get
 from app.services.inputs import InputConflictError
-from app.services.jobs import load_job, save_job
+from app.services.jobs import load_job, save_job, update_job
 from app.services.plans import (
     PlanInfeasibleError,
     PlanStaleError,
@@ -634,6 +635,35 @@ def get_job(
         raise HTTPException(
             status_code=404, detail={"code": "RESOURCE_NOT_FOUND", "message": "资源不存在。"}
         )
+    return Envelope(data=result, request_id=request.state.request_id)
+
+
+@router.patch(
+    "/jobs/{job_id}",
+    response_model=Envelope[JobResult],
+    tags=["jobs"],
+    responses={**AUTH_ERRORS, 409: {"model": ErrorEnvelope, "description": "JD version conflict"}},
+)
+def patch_job(
+    job_id: str,
+    payload: JobUpdate,
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    try:
+        result = update_job(settings, user.id, job_id, payload)
+        if result is None:
+            if load_job(settings, user.id, job_id) is None:
+                raise HTTPException(
+                    404, detail={"code": "RESOURCE_NOT_FOUND", "message": "资源不存在。"}
+                )
+            raise HTTPException(
+                409,
+                detail={"code": "VERSION_CONFLICT", "message": "岗位版本已变化，请刷新后重试。"},
+            )
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
     return Envelope(data=result, request_id=request.state.request_id)
 
 
