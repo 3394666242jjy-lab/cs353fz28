@@ -1,0 +1,286 @@
+{
+  "schema_version": "m3-catalog-v1",
+  "sources": [
+    {
+      "id": "pm-pair",
+      "title": "从用户问题定义 AI 产品价值",
+      "url": "https://codelabs.developers.google.com/codelabs/pair-guidebook",
+      "roles": [
+        "ai_product_manager"
+      ],
+      "topics": [
+        "用户需求",
+        "AI产品",
+        "信任",
+        "价值验证"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "PAIR Guidebook codelab；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/pm-pair.md",
+      "sha256": "c66b545a1d1f4874f4fb5ff35fa9504e6bf78e7c6326084a068a681cd4215e51"
+    },
+    {
+      "id": "pm-metrics",
+      "title": "把模型目标与产品指标连接",
+      "url": "https://developers.google.com/machine-learning/guides/rules-of-ml",
+      "roles": [
+        "ai_product_manager",
+        "agent_engineer"
+      ],
+      "topics": [
+        "产品指标",
+        "机器学习",
+        "基线",
+        "数据质量"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "Rules of ML；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/pm-metrics.md",
+      "sha256": "41c3bab5c5e06c8cc883dae2c0ba905f9ca6730e86063132b4def1dd6d135f29"
+    },
+    {
+      "id": "pm-risk",
+      "title": "在 AI 产品生命周期中管理风险",
+      "url": "https://www.nist.gov/itl/ai-risk-management-framework",
+      "roles": [
+        "ai_product_manager",
+        "agent_engineer"
+      ],
+      "topics": [
+        "AI风险",
+        "评估",
+        "治理",
+        "人工复核"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "NIST AI RMF 资源入口；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/pm-risk.md",
+      "sha256": "2cbe3c8b30a0444fed8c26863441c0dc1a7093db71c03bb62a69e9f2c63b7264"
+    },
+    {
+      "id": "shared-evals",
+      "title": "用任务、轨迹和结果评估 Agent",
+      "url": "https://www.anthropic.com/research/demystifying-evals-for-ai-agents",
+      "roles": [
+        "ai_product_manager",
+        "agent_engineer"
+      ],
+      "topics": [
+        "Agent评测",
+        "任务成功",
+        "轨迹",
+        "回归"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "2026-01-09 文章；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/shared-evals.md",
+      "sha256": "e8c41a89bc6d6b52ffabd64489634fca32da99b8250db90235bd7df5befb41db"
+    },
+    {
+      "id": "full-react",
+      "title": "React 组件拆分与最小状态",
+      "url": "https://react.dev/learn/thinking-in-react",
+      "roles": [
+        "fullstack"
+      ],
+      "topics": [
+        "React",
+        "状态",
+        "组件",
+        "单向数据流"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "React 19.3 文档页面；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/full-react.md",
+      "sha256": "d93c78d8b7021fba73818a194bd92d44280ad56cd4f1bda93f41cfd6a01b3d2d"
+    },
+    {
+      "id": "full-fetch",
+      "title": "Fetch 的 HTTP 错误与取消",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch",
+      "roles": [
+        "fullstack"
+      ],
+      "topics": [
+        "Fetch",
+        "HTTP",
+        "错误处理",
+        "AbortController"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "MDN 使用指南；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/full-fetch.md",
+      "sha256": "d7bf0ef6e6c1316d74df1497450bb7b4490cacbd6bae98a717c953de9c8c64c7"
+    },
+    {
+      "id": "full-transactions",
+      "title": "事务的原子性与中间状态",
+      "url": "https://www.postgresql.org/docs/18/tutorial-transactions.html",
+      "roles": [
+        "fullstack",
+        "agent_engineer"
+      ],
+      "topics": [
+        "事务",
+        "PostgreSQL",
+        "原子性",
+        "一致性"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "PostgreSQL 18 文档；固定主版本",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/full-transactions.md",
+      "sha256": "6e7ce4ba7033f40bb806de983d69438e908972928927fb47f7e8ce4fd710d35d"
+    },
+    {
+      "id": "full-fastapi",
+      "title": "API 身份与权限的职责",
+      "url": "https://fastapi.tiangolo.com/tutorial/security/",
+      "roles": [
+        "fullstack",
+        "agent_engineer"
+      ],
+      "topics": [
+        "FastAPI",
+        "认证",
+        "Bearer",
+        "API权限"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "FastAPI 安全教程；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/full-fastapi.md",
+      "sha256": "95d056215b0485df1bd7f12efbafc5484789ee8a4d2fc24f9e8ed3bfa2f7d18e"
+    },
+    {
+      "id": "full-docker",
+      "title": "区分镜像构建与容器启动",
+      "url": "https://docs.docker.com/get-started/docker-concepts/building-images/writing-a-dockerfile/",
+      "roles": [
+        "fullstack"
+      ],
+      "topics": [
+        "Docker",
+        "Dockerfile",
+        "镜像",
+        "部署"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "Docker 入门指南；网页核验快照",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/full-docker.md",
+      "sha256": "c9593e97ea29bc997cdcab00602eab41f808f6d8b06a7ddc8e63a7694b14064c"
+    },
+    {
+      "id": "agent-patterns",
+      "title": "按任务选择 workflow 与 Agent",
+      "url": "https://www.anthropic.com/research/building-effective-agents",
+      "roles": [
+        "agent_engineer",
+        "ai_product_manager"
+      ],
+      "topics": [
+        "Agent架构",
+        "工作流",
+        "工具调用",
+        "成本"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "2024-12-19 概念文章；非当前 SDK 使用手册",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/agent-patterns.md",
+      "sha256": "ecb678c0ffba847442244d1bc2eb7e28e67c7f2c3a3eaa2ce09b9a85fa1d47e2"
+    },
+    {
+      "id": "agent-interrupts",
+      "title": "暂停、恢复与副作用幂等",
+      "url": "https://docs.langchain.com/oss/python/langgraph/interrupts",
+      "roles": [
+        "agent_engineer"
+      ],
+      "topics": [
+        "LangGraph",
+        "interrupt",
+        "checkpoint",
+        "幂等"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "LangGraph 在线文档；安装版本另行固定",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/agent-interrupts.md",
+      "sha256": "592ae66dd06c98eacb98a2a8e929072d2ee1f71cee4c3c0e161fc2b97937c957"
+    },
+    {
+      "id": "agent-persistence",
+      "title": "区分图执行状态与长期知识",
+      "url": "https://docs.langchain.com/oss/python/langgraph/persistence",
+      "roles": [
+        "agent_engineer"
+      ],
+      "topics": [
+        "LangGraph",
+        "checkpointer",
+        "store",
+        "记忆"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "LangGraph 在线文档；安装版本另行固定",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/agent-persistence.md",
+      "sha256": "a0ab4cceffc5a34337fa9982f629a78e8c246fb4048ccdf59332ef14af81d175"
+    },
+    {
+      "id": "agent-mcp",
+      "title": "MCP 的 host、client 与 server",
+      "url": "https://modelcontextprotocol.io/docs/2026-07-28/learn/architecture",
+      "roles": [
+        "agent_engineer",
+        "fullstack"
+      ],
+      "topics": [
+        "MCP",
+        "工具协议",
+        "host",
+        "client",
+        "server"
+      ],
+      "version": "2026-11-13.r1",
+      "version_scope": "MCP 2026-07-28 文档路径",
+      "verified_on": "2026-11-13",
+      "content_kind": "editorial_summary",
+      "usage": "reference_only",
+      "local_path": "cards/agent-mcp.md",
+      "sha256": "274ac799bdb316d491c438c7bc83e730259e05133d9d00d353c7046dd1bdcf7a"
+    }
+  ]
+}

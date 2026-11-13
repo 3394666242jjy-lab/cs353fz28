@@ -30,6 +30,8 @@ jobs:
       - name: Verify API and contracts
         working-directory: backend
         run: uv run pytest -q
+      - name: Verify M3 structured chunking diagnostic
+        run: uv run --project backend python scripts/m3_chunking_eval.py --output tmp/m3-lexical.json
       - name: Validate local Compose configuration
         run: docker compose config --quiet
       - name: Start local infrastructure and verify real connections

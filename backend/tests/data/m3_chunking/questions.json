@@ -1,0 +1,148 @@
+{
+  "split": "synthetic-development",
+  "sources": [
+    {
+      "role": "ai_product_manager",
+      "path": "ai_product_manager.md",
+      "sha256": "8bbfa5118833a67217b974233b3afe3fd919bd657def6e59e2a7936daecad0f3"
+    },
+    {
+      "role": "fullstack",
+      "path": "fullstack.md",
+      "sha256": "4ba0dfb214582083f4f2ea11d0fb488bc2125154db1af48363a7ba1dc746aaf5"
+    },
+    {
+      "role": "agent_engineer",
+      "path": "agent_engineer.md",
+      "sha256": "e20f4b16065d47e8159ea008620eea2ed6dd37b8bda9965e2aff65b697cc917c"
+    }
+  ],
+  "questions": [
+    {
+      "id": "ai_product_manager-1",
+      "role": "ai_product_manager",
+      "query": "AI 产品需求应该先明确什么？",
+      "document": "ai_product_manager.md",
+      "anchor": "先描述用户、触发情境、当前工作方式和任务结束条件"
+    },
+    {
+      "id": "ai_product_manager-2",
+      "role": "ai_product_manager",
+      "query": "任务完成率的分母是什么？",
+      "document": "ai_product_manager.md",
+      "anchor": "任务完成率的分母是进入约定任务流程的有效尝试次数"
+    },
+    {
+      "id": "ai_product_manager-3",
+      "role": "ai_product_manager",
+      "query": "成本统计是否包括失败重试？",
+      "document": "ai_product_manager.md",
+      "anchor": "失败与重试也计入开销"
+    },
+    {
+      "id": "ai_product_manager-4",
+      "role": "ai_product_manager",
+      "query": "开发样例能不能作为独立验收集？",
+      "document": "ai_product_manager.md",
+      "anchor": "不能同时冒充独立保留的验收集"
+    },
+    {
+      "id": "ai_product_manager-5",
+      "role": "ai_product_manager",
+      "query": "上线时应保留什么运行与版本记录？",
+      "document": "ai_product_manager.md",
+      "anchor": "模型版本、提示词版本、知识来源版本及检索配置都需要留档"
+    },
+    {
+      "id": "ai_product_manager-6",
+      "role": "ai_product_manager",
+      "query": "证据不够时如何让用户理解系统？",
+      "document": "ai_product_manager.md",
+      "anchor": "当系统没有足够证据时，显示缺少什么信息"
+    },
+    {
+      "id": "fullstack-1",
+      "role": "fullstack",
+      "query": "React 最小共享状态应该放在哪里？",
+      "document": "fullstack.md",
+      "anchor": "将组件需要共享的最小状态放在共同上层"
+    },
+    {
+      "id": "fullstack-2",
+      "role": "fullstack",
+      "query": "Fetch 收到 404 应该检查什么？",
+      "document": "fullstack.md",
+      "anchor": "HTTP 404 响应仍可能成功返回 Response 对象，因此需要检查 response.ok"
+    },
+    {
+      "id": "fullstack-3",
+      "role": "fullstack",
+      "query": "代码中如何检查 HTTP 响应失败？",
+      "document": "fullstack.md",
+      "anchor": "if (!response.ok)"
+    },
+    {
+      "id": "fullstack-4",
+      "role": "fullstack",
+      "query": "Outbox 和业务记录如何保持原子写入？",
+      "document": "fullstack.md",
+      "anchor": "业务记录与 Outbox 指令应在同一数据库事务中保存"
+    },
+    {
+      "id": "fullstack-5",
+      "role": "fullstack",
+      "query": "为什么消息重复投递后仍需幂等消费？",
+      "document": "fullstack.md",
+      "anchor": "消费端需要状态版本或幂等键"
+    },
+    {
+      "id": "fullstack-6",
+      "role": "fullstack",
+      "query": "Docker 镜像构建与容器默认命令有什么区别？",
+      "document": "fullstack.md",
+      "anchor": "镜像构建指令和容器默认启动命令有不同生命周期"
+    },
+    {
+      "id": "agent_engineer-1",
+      "role": "agent_engineer",
+      "query": "什么情境适合先使用确定性 workflow？",
+      "document": "agent_engineer.md",
+      "anchor": "任务路径和验收规则明确时，可以先用代码规定节点和路由"
+    },
+    {
+      "id": "agent_engineer-2",
+      "role": "agent_engineer",
+      "query": "Agent 工具参数里的用户身份从哪里取得？",
+      "document": "agent_engineer.md",
+      "anchor": "身份从服务端请求上下文取得"
+    },
+    {
+      "id": "agent_engineer-3",
+      "role": "agent_engineer",
+      "query": "checkpoint 恢复后能否清零模型与工具预算？",
+      "document": "agent_engineer.md",
+      "anchor": "不能因为恢复就把工具调用次数和模型请求次数清零"
+    },
+    {
+      "id": "agent_engineer-4",
+      "role": "agent_engineer",
+      "query": "如何防止节点恢复导致副作用重复？",
+      "document": "agent_engineer.md",
+      "anchor": "因此外部写入需要幂等键"
+    },
+    {
+      "id": "agent_engineer-5",
+      "role": "agent_engineer",
+      "query": "伪代码中正式任务写入需要什么键？",
+      "document": "agent_engineer.md",
+      "anchor": "save_tasks_once(confirmed.idempotency_key, draft)"
+    },
+    {
+      "id": "agent_engineer-6",
+      "role": "agent_engineer",
+      "query": "公共知识可以证明候选人做过项目吗？",
+      "document": "agent_engineer.md",
+      "anchor": "也不能据此把用户的匹配状态改成有证据支持"
+    }
+  ]
+}
