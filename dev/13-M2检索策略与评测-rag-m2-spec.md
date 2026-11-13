@@ -26,7 +26,7 @@ M2 起 `careerpilot_chunks` 集合必须同时具备两个命名字段：
 
 payload 字段与索引不变（`corpus`、`user_id`、`document_id`、`version`、`chunk_id`、`index_version`、`deleted`）。
 
-**迁移要求**：M1 时期创建的集合没有 `sparse` 字段。`ensure_collection()` 会校验并抛出可执行错误（提示删除集合并重建），**不会**在运行时静默降级。重建后需重新索引全部资料；Qdrant 是可重建索引，MongoDB 中的 chunk 原文与 locator 不受影响。
+**迁移要求**：M1 的 dense-only 集合可继续进行稠密写入和检索；稀疏操作遇到缺失字段会明确报错，不静默降级。启用混合检索前，应建立独立的双字段集合并重新索引资料，验证后再切换；不要直接删除共享集合。MongoDB 中的 chunk 原文与 locator 不受影响。
 
 写入侧对 `sparse` 是可选的：只写稠密向量的点仍然合法，因此 M1 代码路径在新集合上照常工作。
 

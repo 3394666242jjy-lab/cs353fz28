@@ -185,7 +185,7 @@ class QdrantVectorStore:
         return self._collection
 
     async def ensure_collection(self) -> None:
-        """确保集合、两个命名字段与 payload 索引就绪。
+        """确保兼容的集合与 payload 索引就绪；新集合包含两个命名字段。
 
         集合已存在时跳过创建（并校验既有结构一致）；索引始终重新断言——建索引是
         幂等操作，因此"集合建成但索引失败"的半完成状态会在重试时自动修复。
@@ -211,26 +211,34 @@ class QdrantVectorStore:
             if response.status_code != 200:
                 raise self._status_error(response)
 
-    def _verify_existing_schema(self, response: httpx.Response) -> None:
+    def _verify_existing_schema(
+        self, response: httpx.Response, *, require_sparse: bool = False
+    ) -> None:
         """校验已存在集合的结构与本适配器一致，不一致按迁移流程拒绝继续。
 
-        两项都要一致：稠密向量维度决定查询能否落地；稀疏字段是 M2 混合检索的落点，
-        缺失时稀疏查询只会得到 Qdrant 的 400，因此在这里提前给出可执行的迁移提示。
+        旧集合允许仅有稠密字段；实际使用稀疏向量时才要求稀疏字段。
         """
         params = response.json().get("result", {}).get("config", {}).get("params", {})
         size = params.get("vectors", {}).get(DENSE_VECTOR_NAME, {}).get("size")
-        if size is not None and size != self._dimension:
+        if size != self._dimension:
             raise VectorStoreError(
                 f"集合 {self._collection} 现有 {size} 维向量，适配器配置为 {self._dimension} 维；"
                 "变更向量维度须按数据库设计文档的变更规则重建索引",
                 retryable=False,
             )
-        if SPARSE_VECTOR_NAME not in (params.get("sparse_vectors") or {}):
+        if require_sparse and SPARSE_VECTOR_NAME not in (params.get("sparse_vectors") or {}):
             raise VectorStoreError(
                 f"集合 {self._collection} 缺少 {SPARSE_VECTOR_NAME} 稀疏字段；"
-                "M2 混合检索要求稠密与稀疏两个命名字段并存，请删除集合并重建索引",
+                "稀疏操作需要迁移到包含稀疏字段的新集合并重建索引",
                 retryable=False,
             )
+
+    async def _require_sparse_schema(self) -> None:
+        """稀疏操作被拒后检查集合能力，不更改既有集合。"""
+        response = await self._send("GET", f"/collections/{self._collection}")
+        if response.status_code != 200:
+            raise self._status_error(response)
+        self._verify_existing_schema(response, require_sparse=True)
 
     async def upsert_chunks(self, points: list[ChunkPoint]) -> None:
         """写入 chunk 点：发送前逐条校验维度，point id 由 point_id 确定性派生。"""
@@ -260,6 +268,10 @@ class QdrantVectorStore:
             json_body=body,
             params={"wait": "true"},
         )
+        if response.status_code == 400 and any(
+            point.sparse is not None and len(point.sparse) > 0 for point in points
+        ):
+            await self._require_sparse_schema()
         if response.status_code != 200:
             raise self._status_error(response)
 
@@ -356,7 +368,7 @@ class QdrantVectorStore:
         top_k: int = 5,
     ) -> list[SearchHit]:
         """按用户隔离执行关键词稀疏召回；过滤语义与稠密检索完全一致。"""
-        if len(sparse_vector) == 0:
+        if len(sparse_vector) == 0 or document_versions == []:
             return []
         return await self._search(
             user_id=user_id,
@@ -412,6 +424,8 @@ class QdrantVectorStore:
                 f"集合 {self._collection} 不存在；请先执行 ensure_collection",
                 retryable=False,
             )
+        if response.status_code == 400 and named_vector == SPARSE_VECTOR_NAME:
+            await self._require_sparse_schema()
         if response.status_code != 200:
             raise self._status_error(response)
         hits = []

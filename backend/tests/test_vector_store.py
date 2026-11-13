@@ -163,18 +163,44 @@ def test_ensure_collection_rejects_embedding_dimension_drift():
     assert excinfo.value.retryable is False
 
 
-def test_ensure_collection_rejects_collection_without_sparse_field():
-    """M1 时期只建了稠密字段的集合：直接给出可执行的迁移提示，而不是等稀疏查询 400。"""
+def test_ensure_collection_accepts_dense_only_without_recreation():
+    requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return collection_config(sparse=False)
+        requests.append(request)
+        return collection_config(sparse=False) if request.method == "GET" else ok()
 
-    with pytest.raises(VectorStoreError) as excinfo:
+    asyncio.run(store(handler).ensure_collection())
+    assert not any(
+        r.method == "PUT" and r.url.path == "/collections/careerpilot_chunks" for r in requests
+    )
+    assert sum(r.url.path.endswith("/index") for r in requests) == 7
+
+
+def test_sparse_operations_reject_dense_only_collection():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "GET":
+            return collection_config(sparse=False)
+        return httpx.Response(400, json={"status": {"error": "missing sparse"}})
+
+    adapter = store(handler)
+    sparse = SparseVector(indices=(1,), values=(1.0,))
+    with pytest.raises(VectorStoreError, match="sparse"):
+        asyncio.run(adapter.upsert_chunks([point(sparse=sparse)]))
+    with pytest.raises(VectorStoreError, match="sparse"):
+        asyncio.run(adapter.search_sparse(user_id="user_demo", sparse_vector=sparse))
+    assert [r.method for r in requests] == ["PUT", "GET", "POST", "GET"]
+
+
+def test_ensure_collection_rejects_missing_dense_name():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"result": {"config": {"params": {"vectors": {}}}}})
+
+    with pytest.raises(VectorStoreError):
         asyncio.run(store(handler).ensure_collection())
-
-    assert "sparse" in str(excinfo.value)
-    assert "重建索引" in str(excinfo.value)
-    assert excinfo.value.retryable is False
 
 
 def test_local_store_without_key_omits_api_key_header():
@@ -247,6 +273,8 @@ def test_upsert_writes_sparse_vector_alongside_dense():
     bodies: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return collection_config()
         bodies.append(json.loads(request.content))
         return ok()
 
@@ -276,6 +304,8 @@ def test_search_sparse_uses_named_field_and_same_owner_filter():
     bodies: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return collection_config()
         bodies.append(json.loads(request.content))
         return httpx.Response(200, json={"result": [raw_hit("chunk_a", 3.2)]})
 

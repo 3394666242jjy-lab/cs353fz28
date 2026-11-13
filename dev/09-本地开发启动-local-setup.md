@@ -127,9 +127,9 @@ M1 要求有文本层 PDF 上传和 Python 后端解析，当前代码已接入�
 | `RERANK_URL` / `RERANK_MODEL` | 百炼原生 rerank 端点 / `gte-rerank-v2` | `qwen-rerank` 在部分账号返回 403，需按账号实测 |
 | `RERANK_API_KEY` | 空 | 留空时复用 `EMBEDDING_API_KEY`（两者共用同一个百炼 Key）|
 
-集合结构自 M2 起要求 `dense` + `sparse` 两个命名字段；M1 时期建的集合缺少 `sparse`
-时 `ensure_collection()` 会给出"删除集合并重建索引"的可执行错误，不会静默降级。只写
-稠密向量的旧代码路径在新集合上仍可正常工作。
+新集合包含 `dense` 和 `sparse` 两个命名字段；M1 的 dense-only 集合可继续执行稠密
+写入和检索，无需删除或重建。使用稀疏操作时缺少字段会明确报错；要启用混合检索，
+应创建独立双字段集合、重建并验证索引后再切换，勿直接删除共享集合。
 
 本地验证（无需模型 Key 的部分）：
 
