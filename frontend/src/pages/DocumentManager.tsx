@@ -335,7 +335,6 @@ export default function DocumentManager({ userId, onDeleted, onUpdated }: Docume
     <section className="document-manager" aria-labelledby="doc-manager-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">M2 / 资料管理</p>
           <h3 id="doc-manager-title">管理已上传的资料</h3>
         </div>
         <div className="mode-switch" role="group" aria-label="资料模式">
