@@ -85,7 +85,7 @@ def _chunks_to_rows(
         "url": source["url"],
         "roles": list(source["roles"]),
         "topics": list(source["topics"]),
-        "verified_on": source["verified_on"],
+        "verified_on": source["verified_on"].isoformat(),
         "content_kind": source["content_kind"],
         "usage": source["usage"],
         "content_sha256": source["sha256"],
