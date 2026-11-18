@@ -1451,6 +1451,8 @@ async def query_knowledge(
             query=payload.query,
             top_k=payload.top_k,
             max_chars=payload.max_chars,
+            topics=payload.topics,
+            source_version=payload.source_version,
         )
     except PyMongoError as exc:
         raise database_unavailable() from exc

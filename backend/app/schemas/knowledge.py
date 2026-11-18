@@ -36,6 +36,8 @@ class KnowledgeQueryIn(ContractModel):
     query: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=4, ge=1, le=8)
     max_chars: int = Field(default=6000, ge=500, le=16000)
+    topics: list[str] = Field(default_factory=list, max_length=8)
+    source_version: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class KnowledgeQueryResult(ContractModel):

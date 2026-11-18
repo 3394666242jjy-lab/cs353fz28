@@ -946,6 +946,10 @@ export interface components {
              * @default 6000
              */
             max_chars: number;
+            /** Topics */
+            topics?: string[];
+            /** Source Version */
+            source_version?: string | null;
         };
         /**
          * KnowledgeQueryResult

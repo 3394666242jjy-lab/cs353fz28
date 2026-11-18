@@ -130,7 +130,7 @@ deadline 使用 YYYY-MM-DD，timezone 为 IANA 时区标识，daily_minutes 为�
 | 方法与路径 | 请求 | 响应 |
 | --- | --- | --- |
 | GET /knowledge/sources?role= | role（ai_product_manager / fullstack / agent_engineer） | 200：已发布来源清单（id/title/url/roles/topics/version/verified_on，usage 恒为 reference_only）；撤回与未发布版本不出现 |
-| POST /knowledge/query | role, query, top_k(1..8，默认 4), max_chars(500..16000，默认 6000) | 200：公共知识引用列表（KnowledgeReference：source_id/source_version/source_url/title/summary/roles）；无命中返回空列表 |
+| POST /knowledge/query | role, query, top_k(1..8，默认 4), max_chars(500..16000，默认 6000), topics(可选主题过滤), source_version(可选版本过滤) | 200：公共知识引用列表（KnowledgeReference：source_id/source_version/source_url/title/summary/roles）；无命中返回空列表 |
 
 两个端点都要求登录。查询按岗位 + 发布状态过滤，向量召回只做候选排序、权威复核在 MongoDB；返回引用一律 `reference_only`，供 Agent 学习参考通道消费，**不能作为个人经历证据**（dev/16 双通道边界，对齐 #39）。total 引用体积不超过 max_chars。入库与撤回走运维脚本 `scripts/manage_knowledge.py`（本地/测试环境），不开放公共写接口；撤回先阻断查询再物理清理向量。
 

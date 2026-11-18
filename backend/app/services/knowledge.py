@@ -39,6 +39,10 @@ SOURCE_STATUS_PUBLISHED = "published"
 SOURCE_STATUS_RETRACTED = "retracted"
 SOURCE_STATUS_PUBLISHING = "publishing"
 
+# 知识素材的整理语言：当前目录（knowledge/cards）全部为中文整理摘要，
+# 目录清单未单列语言字段，这里以常量登记；未来引入多语言素材时改为按来源记录。
+KNOWLEDGE_LANGUAGE = "zh"
+
 
 @dataclass
 class PublishReport:
@@ -85,6 +89,8 @@ def _chunks_to_rows(
         "url": source["url"],
         "roles": list(source["roles"]),
         "topics": list(source["topics"]),
+        "language": KNOWLEDGE_LANGUAGE,
+        "format": Path(source["local_path"]).suffix.lstrip(".") or "unknown",
         "verified_on": source["verified_on"].isoformat(),
         "content_kind": source["content_kind"],
         "usage": source["usage"],
@@ -303,15 +309,17 @@ async def query_references(
     query: str,
     top_k: int = 4,
     max_chars: int = 6000,
+    topics: list[str] | None = None,
+    source_version: str | None = None,
     embedding: EmbeddingProvider | None = None,
     store: QdrantKnowledgeStore | None = None,
 ) -> KnowledgeQueryResult:
     """公共知识引用查询：向量召回只做候选，发布状态与岗位在 MongoDB 层复核。
 
     命中按 (source_id, source_version) 精确回到 MongoDB 行：撤回/未发布/
-    岗位不匹配/已删除的候选一律丢弃；无命中返回空列表，绝不编造引用。
-    返回引用复用 KnowledgeReference 契约（reference_only），供 D 侧
-    knowledge_policy 的公共通道直接消费。
+    岗位不匹配/主题或版本过滤不满足/已删除的候选一律丢弃；无命中返回空列表，
+    绝不编造引用。返回引用复用 KnowledgeReference 契约（reference_only），
+    供 D 侧 knowledge_policy 的公共通道直接消费。
     """
     if not query.strip():
         raise ValueError("查询文本不能为空")
@@ -322,11 +330,14 @@ async def query_references(
 
     with database_connection(settings) as db:
         _ensure_indexes(db)
+        source_filter: dict = {"status": SOURCE_STATUS_PUBLISHED, "roles": role}
+        if topics:
+            source_filter["topics"] = {"$in": list(topics)}
+        if source_version:
+            source_filter["version"] = source_version
         published = {
             (row["source_id"], row["version"]): row
-            for row in db.knowledge_sources.find(
-                {"status": SOURCE_STATUS_PUBLISHED, "roles": role}, {"_id": 0}
-            )
+            for row in db.knowledge_sources.find(source_filter, {"_id": 0})
         }
         if not published:
             return KnowledgeQueryResult(items=[])

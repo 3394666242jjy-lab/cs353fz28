@@ -514,6 +514,80 @@ def test_query_input_contract_validates_role_and_query():
     assert payload.top_k == 8
 
 
+def test_query_filters_topics_and_source_version(settings, fake_db):
+    db, state = fake_db
+    rows = [
+        {
+            "source_id": "agent-patterns",
+            "version": "r1",
+            "title": "模式",
+            "url": "https://example.com/p",
+            "roles": ["agent_engineer"],
+            "topics": ["工作流", "工具"],
+            "text": "路由模式 " * 100,
+        },
+        {
+            "source_id": "agent-persistence",
+            "version": "r2",
+            "title": "持久化",
+            "url": "https://example.com/s",
+            "roles": ["agent_engineer"],
+            "topics": ["持久化", "恢复"],
+            "text": "检查点恢复 " * 100,
+        },
+    ]
+    _seed_published(state, rows)
+    embedding = FakeEmbedding(settings.embedding_dimension)
+    store = FakeStore(settings.embedding_dimension)
+    for row in rows:
+        point = _point(row, vector=embedding._vector(row["text"]))
+        store.points[knowledge_point_id(point)] = point
+
+    captured = {}
+
+    def find_sources(query, projection=None):
+        captured.update(query)
+        rows = list(state["sources"])
+        for key, value in query.items():
+            if key == "status":
+                rows = [r for r in rows if r["status"] == value]
+            elif key == "roles":
+                rows = [r for r in rows if value in r["roles"]]
+            elif key == "topics":
+                rows = [r for r in rows if set(r["topics"]) & set(value["$in"])]
+            elif key == "version":
+                rows = [r for r in rows if r["version"] == value]
+        return rows
+
+    db.knowledge_sources.find.side_effect = find_sources
+    asyncio.run(
+        query_references(
+            settings,
+            role="agent_engineer",
+            query="检查点",
+            topics=["持久化"],
+            source_version="r2",
+            embedding=embedding,
+            store=store,
+        )
+    )
+    assert captured["topics"] == {"$in": ["持久化"]}
+    assert captured["version"] == "r2"
+
+    # 版本过滤不满足时返回空列表。
+    result = asyncio.run(
+        query_references(
+            settings,
+            role="agent_engineer",
+            query="检查点",
+            source_version="r9",
+            embedding=embedding,
+            store=store,
+        )
+    )
+    assert result.items == []
+
+
 def test_knowledge_routes_are_authenticated_and_return_envelopes(monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -537,7 +611,7 @@ def test_knowledge_routes_are_authenticated_and_return_envelopes(monkeypatch):
         lambda settings, *, role: list_published_sources_result(role),
     )
 
-    async def fake_query(settings, *, role, query, top_k, max_chars):
+    async def fake_query(settings, *, role, query, top_k, max_chars, topics, source_version):
         from app.rag.knowledge import KnowledgeReference
         from app.schemas.knowledge import KnowledgeQueryResult
 
