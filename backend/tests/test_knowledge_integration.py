@@ -25,7 +25,7 @@ from app.services.knowledge import (
     retract_source,
 )
 
-KNOWLEDGE_ROOT = Path(__file__).resolve().parents[3] / "knowledge"
+KNOWLEDGE_ROOT = Path(__file__).resolve().parents[2] / "knowledge"
 TEST_DATABASE = "careerpilot_knowledge_test"
 
 pytestmark = pytest.mark.skipif(
