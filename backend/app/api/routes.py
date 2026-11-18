@@ -14,6 +14,7 @@ from pymongo.errors import PyMongoError
 
 from app.api.dependencies import current_user, database_unavailable, request_settings, unauthorized
 from app.config import Settings
+from app.rag.knowledge import Role
 from app.schemas.analysis import (
     AnalysisCreate,
     AnalysisResult,
@@ -23,6 +24,11 @@ from app.schemas.analysis import (
     TextLocator,
 )
 from app.schemas.common import Envelope, ErrorEnvelope
+from app.schemas.knowledge import (
+    KnowledgeQueryIn,
+    KnowledgeQueryResult,
+    KnowledgeSourcePage,
+)
 from app.schemas.resources import (
     DocumentAccepted,
     DocumentDeleted,
@@ -82,6 +88,7 @@ from app.services.executions import (
 from app.services.executions import get_execution as executions_get
 from app.services.inputs import InputConflictError
 from app.services.jobs import load_job, save_job, update_job
+from app.services.knowledge import list_published_sources, query_references
 from app.services.plans import (
     PlanInfeasibleError,
     PlanStaleError,
@@ -1398,3 +1405,68 @@ def get_evidence(
             detail={"code": "INTERNAL_ERROR", "message": "证据记录格式异常，请通过请求 ID 排查。"},
         ) from exc
     return Envelope(data=evidence, request_id=request.state.request_id)
+
+
+@router.get(
+    "/knowledge/sources",
+    response_model=Envelope[KnowledgeSourcePage],
+    tags=["knowledge"],
+    responses=AUTH_ERRORS,
+)
+def list_knowledge_sources(
+    request: Request,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+    role: Role,
+):
+    """列出已发布的公共知识来源（按岗位过滤）；撤回与未发布版本不出现。"""
+    try:
+        items = list_published_sources(settings, role=role)
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    return Envelope(data=KnowledgeSourcePage(items=items), request_id=request.state.request_id)
+
+
+@router.post(
+    "/knowledge/query",
+    response_model=Envelope[KnowledgeQueryResult],
+    tags=["knowledge"],
+    responses=AUTH_ERRORS,
+)
+async def query_knowledge(
+    request: Request,
+    payload: KnowledgeQueryIn,
+    settings: Annotated[Settings, Depends(request_settings)],
+    user: Annotated[UserResult, Depends(current_user)],
+):
+    """公共知识引用查询：只返回已发布且岗位匹配的版本；无命中为空列表。
+
+    引用一律 ``reference_only``，供 Agent 学习参考通道消费，不能作为
+    个人经历证据（dev/16 双通道边界，对齐 #39）。
+    """
+    try:
+        result = await query_references(
+            settings,
+            role=payload.role,
+            query=payload.query,
+            top_k=payload.top_k,
+            max_chars=payload.max_chars,
+            topics=payload.topics,
+            source_version=payload.source_version,
+        )
+    except PyMongoError as exc:
+        raise database_unavailable() from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "INVALID_QUERY", "message": str(exc)},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "KNOWLEDGE_UNAVAILABLE",
+                "message": "公共知识检索暂不可用，请稍后重试。",
+            },
+        ) from exc
+    return Envelope(data=result, request_id=request.state.request_id)
