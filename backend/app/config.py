@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     vector_store_url: str = "http://127.0.0.1:6333"
     vector_store_api_key: SecretStr | None = None
     vector_store_collection: str = "careerpilot_chunks"
+    # 公共知识集合（M3.2，issue #41）：与个人语料完全隔离的独立集合，不依赖
+    # corpus 参数防漏传；撤回与重建都不会触碰个人索引。
+    knowledge_vector_collection: str = "careerpilot_knowledge"
     vector_store_timeout_seconds: float = Field(default=10.0, ge=0.1, le=60.0)
     vector_store_max_retries: int = Field(default=2, ge=0, le=5)
     # 重试退避基数（秒）：第 n 次重试等待 backoff * 2^(n-1)。
