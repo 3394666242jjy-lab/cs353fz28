@@ -107,10 +107,16 @@ locator 示例：`{"kind":"pdf","page":2}` 或 `{"kind":"text","line_start":10,"
 | execution_inputs | execution_id, interrupt_id 唯一 | 重复恢复请求去重，比较 content_hash 识别不同输入 |
 | execution_events | execution_id, sequence 唯一 | SSE 有序回放及重复事件识别 |
 | agent_threads | execution_id 唯一；thread_id 唯一 | 图执行的服务端归属与定位 |
+| knowledge_sources | (source_id, version) 唯一；status | 公共知识来源版本与发布/撤回状态（M3.2，#41） |
+| knowledge_chunks | (source_id, source_version, chunk_id) 唯一；(source_id, source_version) | 公共知识 chunk 原文与 span 的权威副本（M3.2，#41） |
 
 M1 先实现 users、documents、document_versions、chunks、jobs、analyses 和 executions 对应索引；Qdrant 的 personal 用户/文档/版本过滤始终生效。后续集合按阶段引入，不能为了首轮简单而移除基本权限隔离。
 
 Qdrant payload 至少包含 corpus、user_id、document_id、version、chunk_id、index_version、deleted 标志；个人 user_id 与文档版本等过滤字段建立适用索引。稠密向量和关键词稀疏表示使用不同命名字段；启用混合检索时记录所用稀疏模型/分词器版本。重排模型位于服务适配器，可在召回后对原文候选执行，不要求额外存入第三种向量。
+
+### 公共知识（M3.2，#41）
+
+公共参考知识使用**独立集合** `careerpilot_knowledge`（`KNOWLEDGE_VECTOR_COLLECTION` 可配），与个人语料集合完全隔离，不依赖 corpus 参数防漏传。该集合只有稠密向量，payload 为 source_id、source_version、chunk_id、index_version、deleted；chunk 原文与 char/行 span 的权威副本在 MongoDB `knowledge_chunks`，Qdrant 只存向量。`knowledge_sources` 每 (source_id, version) 一行，记录 url、roles/topics、content_kind、usage（恒为 reference_only）、内容 sha256、chunking/embedding 版本与状态机 publishing → published → retracted（附 purge_status）。发布幂等（同版本跳过，内容修订必须递增版本）；撤回先阻断查询、再按 (source_id, source_version) 过滤物理删除向量（指数退避重试），失败置 purge_status=failed 可重跑。检索前按 published 状态与岗位在 MongoDB 复核，向量召回只做候选排序；公共引用不得进入个人证据 supported/partial 依据。
 
 检索前验证文档仍可访问，返回结果再核对权威状态；Qdrant 过滤与 MongoDB 校验共同生效。source_url、相似度和排序分数不得当成“求职成功概率”。
 
