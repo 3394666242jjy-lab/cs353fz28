@@ -4,13 +4,23 @@ import { describeError } from './api/errors';
 import { sampleInputs, type AnalysisResult } from './api/fixtures';
 import JdVersionBar, { type JobNotice, type JobVersionInfo } from './components/JdVersionBar';
 import StatusBadge from './components/StatusBadge';
+import Icon from './components/Icon';
 import AnalysisPanel from './pages/AnalysisPanel';
 import DocumentManager from './pages/DocumentManager';
 import DocumentUpload from './pages/DocumentUpload';
 import JdImport from './pages/JdImport';
 import PlanPanel from './pages/PlanPanel';
+import KnowledgeLibrary from './pages/KnowledgeLibrary';
 
-const steps = ['资料准备', '目标岗位', '匹配分析', '准备计划'];
+const steps = ['资料准备', '目标岗位', '匹配分析', '准备计划', '知识素材'];
+const stepIcons = ['documents', 'job', 'analysis', 'plan', 'knowledge'] as const;
+const pageCopy = [
+  ['让你的经历，成为准备的起点。', '整理简历与项目资料，让每一项岗位匹配都有据可查。'],
+  ['找准方向，再开始准备。', '保存目标岗位的要求，用已有经历找到下一步。'],
+  ['理解匹配，也看见差距。', '逐项核对岗位要求与原文证据，找到值得补充的信息。'],
+  ['把准备，安排进每一天。', '设定目标日期与可用时间，预览后再确认你的计划。'],
+  ['向你想去的方向，多走一步。', '从可靠来源学习，把知识转化成下一次实践的起点。'],
+];
 const JOB_KEY = 'careerpilot.job';
 const ANALYSIS_KEY = 'careerpilot.analysis';
 type Connection = 'checking' | 'connected' | 'disconnected';
@@ -109,6 +119,11 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [accountOpen, setAccountOpen] = useState(false);
+
+  useEffect(() => {
+    if (accountOpen) document.getElementById('account-panel')?.scrollIntoView({ block: 'nearest' });
+  }, [accountOpen]);
 
   function clearSessionData() {
     sessionStorage.removeItem('careerpilot.pending_documents');
@@ -138,6 +153,7 @@ export default function App() {
     }
     sessionStorage.setItem('careerpilot.owner', current.id);
     setUser(current);
+    setAccountOpen(false);
   }
 
   useEffect(() => {
@@ -202,6 +218,7 @@ export default function App() {
     setAuthError('');
     clearSessionData();
     setStep(0);
+    setAccountOpen(false);
   }
 
   useEffect(() => {
@@ -374,6 +391,7 @@ export default function App() {
       : connection === 'checking'
         ? '检查后端连接…'
         : '后端未连接';
+  const milestones = [documentIds.length > 0, Boolean(job && !jobDirty), hasRealAnalysis];
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
@@ -382,7 +400,15 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            C<span>.</span>
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M5 24 13 8l5 9 9-13M5 24h11l5-9"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </span>
           <div>
             <strong>CareerPilot</strong>
@@ -390,58 +416,61 @@ export default function App() {
           </div>
         </div>
         <div className="workspace-label">
-          个人工作区 <span>LOCAL</span>
+          准备工作区 <span>个人</span>
         </div>
         <nav aria-label="准备步骤" className="step-nav">
           {steps.map((label, index) => (
             <button
               key={label}
               className={step === index ? 'nav-item active' : 'nav-item'}
-              aria-current={step === index ? 'step' : undefined}
+              aria-current={step === index ? 'page' : undefined}
               onClick={() => setStep(index)}
             >
-              <span className="step-number">0{index + 1}</span>
+              <Icon name={stepIcons[index]} />
               <span>{label}</span>
               {step === index && <span className="nav-indicator" aria-hidden="true" />}
             </button>
           ))}
         </nav>
         <div className="sidebar-note">
-          <p className="eyebrow">M2 / 资料与计划</p>
-          <p>先整理资料，再用证据理解岗位要求。</p>
-          <span>资料版本、岗位编辑与准备计划已在 M2 接入。</span>
+          <Icon name="shield" />
+          <p>有依据，才有方向。</p>
+          <span>你的经历由个人资料证明。公共知识只用于学习参考。</span>
         </div>
         <div className="connection-block">
           <StatusBadge
             label={connectionLabel}
             tone={connection === 'connected' ? 'success' : 'neutral'}
           />
-          <p>支持资料管理、岗位分析和计划确认；真实分析需模型与开发依赖就绪。</p>
-          <a href={api.docsUrl} target="_blank" rel="noreferrer">
-            打开 API 文档 <span aria-hidden="true">↗</span>
-          </a>
-          <button
-            className="text-button probe-button"
-            onClick={() => void probe()}
-            disabled={probing}
-          >
-            {probing ? '正在检查…' : '检查开发依赖'}
-          </button>
-          <div aria-live="polite">
-            {dependencies && (
-              <ul className="dependency-list">
-                {Object.entries(dependencies).map(([name, status]) => (
-                  <li key={name}>
-                    <span>{name}</span>
-                    <span className={status === 'ok' ? 'healthy' : ''}>
-                      {status === 'ok' ? '已就绪' : '未就绪'}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {probeMessage && <p>{probeMessage}</p>}
-          </div>
+          <details className="service-details">
+            <summary>连接与开发工具</summary>
+            <p>真实分析需后端、模型与开发依赖就绪。</p>
+            <a href={api.docsUrl} target="_blank" rel="noreferrer">
+              打开 API 文档 ↗
+            </a>
+            <button
+              className="text-button probe-button"
+              onClick={() => void probe()}
+              disabled={probing}
+            >
+              {probing ? '正在检查…' : '检查开发依赖'}
+            </button>
+            <div aria-live="polite">
+              {dependencies && (
+                <ul className="dependency-list">
+                  {Object.entries(dependencies).map(([name, status]) => (
+                    <li key={name}>
+                      <span>{name}</span>
+                      <span className={status === 'ok' ? 'healthy' : ''}>
+                        {status === 'ok' ? '已就绪' : '未就绪'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {probeMessage && <p>{probeMessage}</p>}
+            </div>
+          </details>
         </div>
       </aside>
 
@@ -450,22 +479,40 @@ export default function App() {
           <span>
             工作台 <span aria-hidden="true">/</span> {steps[step]}
           </span>
-          <StatusBadge label={user ? `已登录 · ${user.display_name}` : '本地会话 · 未登录'} />
+          <button
+            type="button"
+            className="account-button"
+            aria-expanded={accountOpen}
+            aria-controls="account-panel"
+            onClick={() => setAccountOpen(!accountOpen)}
+          >
+            <span className="avatar">
+              <Icon name="user" />
+            </span>
+            {user ? user.display_name : '登录账号'}
+            <span aria-hidden="true">⌄</span>
+          </button>
         </header>
-        <div className="page-intro">
-          <p className="eyebrow">CAREERPILOT / WORKSPACE</p>
-          <h1>你的求职准备，从经历开始。</h1>
-          <p>整理个人资料，选择目标岗位，核对证据，再生成准备计划。</p>
-        </div>
-        <div className="demo-notice">
-          <span className="notice-label">开发预览</span>
-          <p>
-            登录后可上传资料并发起分析。真实分析需要启动项目依赖并配置模型；「样例演练」可离线预览。
-          </p>
-        </div>
 
-        <section className="panel session-panel" aria-labelledby="session-title">
-          <h2 id="session-title">{user ? '当前账号' : '登录开发账号'}</h2>
+        <section
+          id="account-panel"
+          hidden={!accountOpen && !authError}
+          className="panel session-panel"
+          aria-labelledby="session-title"
+        >
+          <div className="panel-title">
+            <h2 id="session-title">{user ? '当前账号' : '登录你的工作区'}</h2>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setAccountOpen(false);
+                setAuthError('');
+              }}
+            >
+              收起
+            </button>
+          </div>
           {user ? (
             <div className="session-current">
               <p>
@@ -509,12 +556,53 @@ export default function App() {
           )}
         </section>
 
+        <div className="page-intro">
+          <div className="intro-copy">
+            <p className="intro-greeting">
+              {user ? `${user.display_name}，开始今天的准备` : '每一步准备，都算数'}
+            </p>
+            <h1>{pageCopy[step][0]}</h1>
+            <p>{pageCopy[step][1]}</p>
+          </div>
+          <div className="intro-art" aria-hidden="true">
+            <span className="art-orbit" />
+            <span className="art-sheet">
+              <i />
+              <i />
+              <i />
+              <b>✓</b>
+            </span>
+            <span className="art-compass">✧</span>
+          </div>
+        </div>
+        {step === 0 && (
+          <div className="preparation-path" aria-label="准备路径">
+            {steps.slice(0, 4).map((label, index) => (
+              <button
+                type="button"
+                key={label}
+                onClick={() => setStep(index)}
+                className={milestones[index] ? 'complete' : ''}
+              >
+                <span>{milestones[index] ? '✓' : String(index + 1).padStart(2, '0')}</span>
+                <div>
+                  <strong>{label}</strong>
+                  <small>
+                    {['收集你的经历', '保存目标 JD', '核对匹配证据', '确认行动安排'][index]}
+                  </small>
+                </div>
+                {index < 3 && <Icon name="arrow" />}
+              </button>
+            ))}
+          </div>
+        )}
+
         {step === 0 && (
           <section aria-labelledby="documents-title">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">01 / 资料准备</p>
-                <h2 id="documents-title">先让经历有据可查</h2>
+                <h2 id="documents-title">你的资料</h2>
+                <p className="muted small">准备简历与项目说明，开始一次有依据的分析。</p>
               </div>
               <span className="muted small">简历 + 项目说明</span>
             </div>
@@ -525,8 +613,16 @@ export default function App() {
                     <path d="M12 16V4m-4 4 4-4 4 4M5 15v5h14v-5" />
                   </svg>
                 </div>
-                <h3>添加个人资料</h3>
-                <p className="muted">支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。</p>
+                <h3>添加一份经历</h3>
+                <p className="muted">简历或项目说明，让你的能力有迹可循。</p>
+                {!user && (
+                  <p className="upload-login-hint">
+                    上传前需要登录。
+                    <button className="text-button" onClick={() => setAccountOpen(true)}>
+                      登录账号
+                    </button>
+                  </p>
+                )}
                 <DocumentUpload
                   key={user?.id ?? 'anonymous'}
                   userId={user?.id}
@@ -534,10 +630,10 @@ export default function App() {
                 />
               </div>
               <div className="panel sample-panel">
-                <span className="eyebrow">无需个人资料</span>
-                <h3>用一套合成资料走一遍</h3>
+                <span className="sample-label">先体验一下</span>
+                <h3>从一份示例，看见整个流程。</h3>
                 <p className="muted">
-                  示例简历、校园项目和后端实习 JD 已准备好，包含三种匹配情况。
+                  合成简历、校园项目和岗位 JD 已准备好。无需登录，也能核对分析与证据。
                 </p>
                 <ul className="file-list">
                   <li>
@@ -554,7 +650,7 @@ export default function App() {
                   </li>
                 </ul>
                 <button className="primary-button" onClick={loadSample}>
-                  载入合成样例 <span aria-hidden="true">→</span>
+                  体验合成样例 <Icon name="arrow" />
                 </button>
               </div>
             </div>
@@ -596,7 +692,6 @@ export default function App() {
           <section aria-labelledby="job-title">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">02 / 目标岗位</p>
                 <h2 id="job-title">这次，准备哪个岗位？</h2>
               </div>
               <button className="secondary-button" onClick={loadSample}>
@@ -700,7 +795,12 @@ export default function App() {
         )}
         <div
           className="panel"
-          hidden={step === 0 || step === 3 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
+          hidden={
+            step === 0 ||
+            step === 3 ||
+            step === 4 ||
+            (step === 2 && (!hasRealAnalysis || analysisVisible))
+          }
         >
           {(!hasAuthToken() || user) && (
             <JdImport
@@ -731,9 +831,10 @@ export default function App() {
           )}
         </div>
         {step === 3 && <PlanPanel analysisId={analysis?.id} analysisTitle={title} />}
+        {step === 4 && <KnowledgeLibrary userId={user?.id} onLogin={() => setAccountOpen(true)} />}
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>
-          <span>开发预览</span>
+          <span>以经历为依据，以行动为下一步。</span>
         </footer>
       </main>
     </div>
