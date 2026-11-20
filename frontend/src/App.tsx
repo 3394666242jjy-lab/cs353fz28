@@ -831,7 +831,7 @@ export default function App() {
           )}
         </div>
         {step === 3 && <PlanPanel analysisId={analysis?.id} analysisTitle={title} />}
-        {step === 4 && <KnowledgeLibrary />}
+        {step === 4 && <KnowledgeLibrary userId={user?.id} onLogin={() => setAccountOpen(true)} />}
         <footer className="page-footer">
           <span>CareerPilot · CS353FZ</span>
           <span>以经历为依据，以行动为下一步。</span>

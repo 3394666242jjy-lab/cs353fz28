@@ -2,8 +2,36 @@ import { useEffect, useRef, useState } from 'react';
 import { filterKnowledge, knowledgeSources, roles, type Role } from '../api/knowledge';
 import Icon from '../components/Icon';
 import StatusBadge from '../components/StatusBadge';
+import OnlineKnowledgeLibrary from './OnlineKnowledgeLibrary';
 
-export default function KnowledgeLibrary() {
+export default function KnowledgeLibrary({
+  userId,
+  onLogin,
+}: {
+  userId?: string;
+  onLogin: () => void;
+}) {
+  const [mode, setMode] = useState<'local' | 'online'>('local');
+  return (
+    <div>
+      <div className="knowledge-mode" role="group" aria-label="知识素材模式">
+        <button aria-pressed={mode === 'local'} onClick={() => setMode('local')}>
+          本地素材预览
+        </button>
+        <button aria-pressed={mode === 'online'} onClick={() => setMode('online')}>
+          在线知识查询
+        </button>
+      </div>
+      {mode === 'local' ? (
+        <LocalKnowledgeLibrary />
+      ) : (
+        <OnlineKnowledgeLibrary key={userId ?? 'anonymous'} userId={userId} onLogin={onLogin} />
+      )}
+    </div>
+  );
+}
+
+function LocalKnowledgeLibrary() {
   const [role, setRole] = useState<Role>('ai_product_manager');
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState('');
@@ -62,7 +90,7 @@ export default function KnowledgeLibrary() {
         <p>
           <strong>学习参考与个人经历分开</strong>
           <span>
-            这里的内容是项目整理摘要，可帮助学习与理解；不能证明你具备某项技能。在线知识检索尚未接入。
+            这里的内容是项目整理摘要，可帮助学习与理解；不能证明你具备某项技能。本地预览不访问在线知识库。
           </span>
         </p>
       </div>
