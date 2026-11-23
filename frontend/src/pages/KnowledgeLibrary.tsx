@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { filterKnowledge, knowledgeSources, roles, type Role } from '../api/knowledge';
+import { filterKnowledge, knowledgeSources, type Role } from '../api/knowledge';
 import Icon from '../components/Icon';
+import RolePicker from '../components/RolePicker';
 import StatusBadge from '../components/StatusBadge';
+import ReadingDialog from '../components/ReadingDialog';
+import SourceDetails from '../components/SourceDetails';
+import { highlightParts, parseReadingState } from '../components/reading-state';
 import OnlineKnowledgeLibrary from './OnlineKnowledgeLibrary';
 
 export default function KnowledgeLibrary({
@@ -23,7 +27,7 @@ export default function KnowledgeLibrary({
         </button>
       </div>
       {mode === 'local' ? (
-        <LocalKnowledgeLibrary />
+        <LocalKnowledgeLibrary key={userId ?? 'anonymous'} owner={userId ?? 'anonymous'} />
       ) : (
         <OnlineKnowledgeLibrary key={userId ?? 'anonymous'} userId={userId} onLogin={onLogin} />
       )}
@@ -31,20 +35,147 @@ export default function KnowledgeLibrary({
   );
 }
 
-function LocalKnowledgeLibrary() {
-  const [role, setRole] = useState<Role>('ai_product_manager');
-  const [query, setQuery] = useState('');
-  const [topic, setTopic] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+function Highlight({ text, query }: { text: string; query: string }) {
+  return highlightParts(text, query).map((part, index) =>
+    part.match ? <mark key={index}>{part.text}</mark> : part.text,
+  );
+}
+type KnowledgeSource = (typeof knowledgeSources)[number];
+function KnowledgeBody({
+  source,
+  query,
+  focused = false,
+}: {
+  source: KnowledgeSource;
+  query: string;
+  focused?: boolean;
+}) {
+  return (
+    <>
+      {focused ? <h2>{source.title}</h2> : <h3>{source.title}</h3>}
+      <p className="small muted">项目整理摘要，并非官方原文。</p>
+      <div className="knowledge-content">
+        {source.content
+          .split(/\n\s*\n/)
+          .filter((block) => !block.startsWith('# '))
+          .map((block, index) =>
+            block.startsWith('## ') ? (
+              focused ? (
+                <h3 key={index}>{block.slice(3)}</h3>
+              ) : (
+                <h4 key={index}>{block.slice(3)}</h4>
+              )
+            ) : (
+              <p key={index}>
+                <Highlight text={block} query={query} />
+              </p>
+            ),
+          )}
+      </div>
+      <SourceDetails
+        url={source.url}
+        version={source.version}
+        verifiedOn={source.verified_on}
+        scope={source.version_scope}
+      />
+    </>
+  );
+}
+
+function LocalKnowledgeLibrary({ owner }: { owner: string }) {
+  const storageKey = 'careerpilot.reading:v1:' + owner;
+  const [saved] = useState(() => {
+    try {
+      return parseReadingState(sessionStorage.getItem(storageKey));
+    } catch {
+      return parseReadingState(null);
+    }
+  });
+  const [role, setRole] = useState<Role>(saved.role);
+  const [query, setQuery] = useState(saved.query);
+  const [topic, setTopic] = useState(saved.topic);
+  const [selectedId, setSelectedId] = useState<string | null>(saved.selectedId);
+  const [focused, setFocused] = useState(false);
+  const [userSelected, setUserSelected] = useState(false);
   const detailRef = useRef<HTMLElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const focusTrigger = useRef<HTMLButtonElement>(null);
+  const current = useRef({ role, query, topic, selectedId });
+  current.current = { role, query, topic, selectedId };
+  const scrollPoint = useRef({ pageY: saved.pageY, listY: saved.listY });
   const sources = filterKnowledge(role, query, topic);
   const selected = sources.find((source) => source.id === selectedId);
   useEffect(() => {
-    if (selected?.id && window.matchMedia('(max-width: 850px)').matches) {
+    if (userSelected && selected?.id && window.matchMedia('(max-width: 850px)').matches) {
       detailRef.current?.focus();
       detailRef.current?.scrollIntoView({ block: 'start' });
     }
-  }, [selected?.id]);
+  }, [selected?.id, userSelected]);
+  useEffect(() => {
+    let leaving = false;
+    const persist = () => {
+      try {
+        sessionStorage.setItem(
+          storageKey,
+          JSON.stringify({ version: 1, ...current.current, ...scrollPoint.current }),
+        );
+      } catch {
+        /* Optional storage. */
+      }
+    };
+    const record = () => {
+      if (leaving) return;
+      // Returning to the navigation must not replace the last visible reading position.
+      if (current.current.selectedId && detailRef.current) {
+        const detail = detailRef.current.getBoundingClientRect();
+        if (detail.top >= window.innerHeight || detail.bottom <= 0) return;
+      }
+      scrollPoint.current = { pageY: window.scrollY, listY: listRef.current?.scrollTop ?? 0 };
+    };
+    const beforeNavigate = () => {
+      record();
+      leaving = true;
+      persist();
+    };
+    const frame = requestAnimationFrame(() => {
+      if (listRef.current) listRef.current.scrollTop = saved.listY;
+      if (saved.pageY) window.scrollTo({ top: saved.pageY, behavior: 'instant' });
+    });
+    const list = listRef.current;
+    window.addEventListener('scroll', record, { passive: true });
+    list?.addEventListener('scroll', record, { passive: true });
+    window.addEventListener('pagehide', persist);
+    window.addEventListener('careerpilot-before-navigate', beforeNavigate);
+    return () => {
+      cancelAnimationFrame(frame);
+      persist();
+      window.removeEventListener('scroll', record);
+      list?.removeEventListener('scroll', record);
+      window.removeEventListener('pagehide', persist);
+      window.removeEventListener('careerpilot-before-navigate', beforeNavigate);
+    };
+  }, [storageKey, saved]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({ version: 1, ...current.current, ...scrollPoint.current }),
+      );
+    } catch {
+      /* Optional storage. */
+    }
+  }, [role, query, topic, selectedId, storageKey]);
+  function clearFilters() {
+    setQuery('');
+    setTopic('');
+  }
+  function returnToList() {
+    setUserSelected(false);
+    listRef.current
+      ?.querySelector<HTMLButtonElement>('[aria-expanded="true"]')
+      ?.focus({ preventScroll: true });
+    listRef.current?.scrollIntoView({ block: 'nearest' });
+  }
   const topics = [
     ...new Set(
       knowledgeSources
@@ -52,39 +183,33 @@ function LocalKnowledgeLibrary() {
         .flatMap((source) => source.topics),
     ),
   ];
-
   return (
     <section className="knowledge-library" aria-labelledby="knowledge-title">
       <div className="section-heading">
         <div>
-          <h2 id="knowledge-title">为下一个方向，补充知识</h2>
+          <h2 id="knowledge-title">学习资料库</h2>
           <p className="muted">浏览项目整理的 13 份学习素材，按方向找到值得深入的主题。</p>
         </div>
         <StatusBadge label="本地素材预览" />
       </div>
-      <div className="role-picker" role="group" aria-label="岗位方向">
-        {(Object.keys(roles) as Role[]).map((key) => (
-          <button
-            key={key}
-            className={`role-option ${role === key ? 'active' : ''}`}
-            aria-pressed={role === key}
-            onClick={() => {
-              setRole(key);
-              setTopic('');
-              setSelectedId(null);
-            }}
-          >
-            <span className="role-symbol" aria-hidden="true">
-              {roles[key].symbol}
-            </span>
-            <strong>{roles[key].label}</strong>
-            <span>{roles[key].description}</span>
-            <small>
-              {knowledgeSources.filter((source) => source.roles.includes(key)).length} 份素材
-            </small>
-          </button>
-        ))}
-      </div>
+      <RolePicker
+        value={role}
+        counts={{
+          ai_product_manager: knowledgeSources.filter((source) =>
+            source.roles.includes('ai_product_manager'),
+          ).length,
+          fullstack: knowledgeSources.filter((source) => source.roles.includes('fullstack')).length,
+          agent_engineer: knowledgeSources.filter((source) =>
+            source.roles.includes('agent_engineer'),
+          ).length,
+        }}
+        onChange={(key) => {
+          setRole(key);
+          setTopic('');
+          setSelectedId(null);
+          setUserSelected(false);
+        }}
+      />
       <div className="reference-notice">
         <Icon name="shield" />
         <p>
@@ -115,22 +240,65 @@ function LocalKnowledgeLibrary() {
         </label>
         <p role="status">找到 {sources.length} 份素材</p>
       </div>
-      <div className="knowledge-layout">
-        <ul className="knowledge-list">
+      {(query.trim() || topic) && (
+        <div className="filter-chips" aria-label="当前筛选">
+          {query
+            .trim()
+            .split(/\s+/)
+            .filter(Boolean)
+            .map((term, index) => (
+              <button
+                type="button"
+                key={index}
+                aria-label={'移除关键词 ' + term}
+                onClick={() =>
+                  setQuery(
+                    query
+                      .trim()
+                      .split(/\s+/)
+                      .filter((_, i) => i !== index)
+                      .join(' '),
+                  )
+                }
+              >
+                关键词：{term}
+                <span aria-hidden="true">×</span>
+              </button>
+            ))}
+          {topic && (
+            <button type="button" aria-label={'移除主题 ' + topic} onClick={() => setTopic('')}>
+              主题：{topic}
+              <span aria-hidden="true">×</span>
+            </button>
+          )}
+          <button type="button" className="clear-filters" onClick={clearFilters}>
+            清空筛选
+          </button>
+        </div>
+      )}
+      <div className={'knowledge-layout ' + (selected ? 'has-selection' : '')}>
+        <ul ref={listRef} className="knowledge-list" aria-label="学习素材列表">
           {sources.map((source) => (
             <li key={source.id}>
               <button
-                className={`knowledge-item ${selected?.id === source.id ? 'active' : ''}`}
+                className={'knowledge-item ' + (selected?.id === source.id ? 'active' : '')}
                 aria-expanded={selected?.id === source.id}
                 aria-controls="knowledge-detail"
-                onClick={() => setSelectedId(source.id)}
+                onClick={() => {
+                  setUserSelected(true);
+                  setSelectedId(source.id);
+                }}
               >
                 <span className="knowledge-item-top">
                   <span>整理摘要</span>
                   <span aria-hidden="true">↗</span>
                 </span>
-                <strong>{source.title}</strong>
-                <span className="knowledge-topics">{source.topics.join(' / ')}</span>
+                <strong>
+                  <Highlight text={source.title} query={query} />
+                </strong>
+                <span className="knowledge-topics">
+                  <Highlight text={source.topics.join(' / ')} query={query} />
+                </span>
                 <small>{new URL(source.url).hostname}</small>
               </button>
             </li>
@@ -139,13 +307,7 @@ function LocalKnowledgeLibrary() {
             <li className="knowledge-empty">
               <h3>没有找到匹配的素材</h3>
               <p>试试更短的关键词，或清空关键词与主题。</p>
-              <button
-                className="secondary-button"
-                onClick={() => {
-                  setQuery('');
-                  setTopic('');
-                }}
-              >
+              <button className="secondary-button" onClick={clearFilters}>
                 清空筛选
               </button>
             </li>
@@ -161,44 +323,36 @@ function LocalKnowledgeLibrary() {
         >
           {selected ? (
             <>
-              <div className="panel-title">
+              <div className="panel-title knowledge-detail-actions">
                 <StatusBadge label="公共学习参考" tone="success" />
-                <button className="text-button" onClick={() => setSelectedId(null)}>
+                <button
+                  ref={focusTrigger}
+                  type="button"
+                  className="secondary-button focus-reading-button"
+                  onClick={() => setFocused(true)}
+                >
+                  专注阅读
+                </button>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    returnToList();
+                    setSelectedId(null);
+                  }}
+                >
                   关闭详情
                 </button>
               </div>
-              <h3>{selected.title}</h3>
-              <p className="small muted">项目整理摘要，并非官方原文。</p>
-              <div className="knowledge-content">
-                {selected.content
-                  .split(/\n\s*\n/)
-                  .filter((block) => !block.startsWith('# '))
-                  .map((block, index) =>
-                    block.startsWith('## ') ? (
-                      <h4 key={index}>{block.slice(3)}</h4>
-                    ) : (
-                      <p key={index}>{block}</p>
-                    ),
-                  )}
+              <div className="knowledge-detail-copy" key={selected.id}>
+                <KnowledgeBody source={selected} query={query} />
               </div>
-              <dl className="source-meta">
-                <div>
-                  <dt>摘要版本</dt>
-                  <dd>{selected.version}</dd>
-                </div>
-                <div>
-                  <dt>来源核验日期</dt>
-                  <dd>{selected.verified_on}</dd>
-                </div>
-                <div>
-                  <dt>适用版本</dt>
-                  <dd>{selected.version_scope}</dd>
-                </div>
-              </dl>
-              <a className="source-link" href={selected.url} target="_blank" rel="noreferrer">
-                阅读官方来源 <span aria-hidden="true">↗</span>
-              </a>
-              <p className="small muted">{new URL(selected.url).hostname}</p>
+              <button
+                type="button"
+                className="text-button return-to-materials"
+                onClick={returnToList}
+              >
+                返回素材列表
+              </button>
             </>
           ) : (
             <div className="knowledge-placeholder">
@@ -210,6 +364,16 @@ function LocalKnowledgeLibrary() {
           )}
         </article>
       </div>
+      {focused && selected && (
+        <ReadingDialog
+          title={selected.title}
+          trigger={focusTrigger}
+          onClose={() => setFocused(false)}
+        >
+          <StatusBadge label="公共学习参考" tone="success" />
+          <KnowledgeBody source={selected} query={query} focused />
+        </ReadingDialog>
+      )}
     </section>
   );
 }

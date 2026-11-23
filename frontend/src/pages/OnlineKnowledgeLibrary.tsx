@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { api, ApiError } from '../api/client';
 import { describeError } from '../api/errors';
-import { roles, type Role } from '../api/knowledge';
+import { type Role } from '../api/knowledge';
 import { LatestRequest } from '../api/latest-request';
 import type { KnowledgeQueryResult, KnowledgeSource } from '../api/m3-types';
 import Icon from '../components/Icon';
 import StatusBadge from '../components/StatusBadge';
+import RolePicker from '../components/RolePicker';
+import SourceDetails from '../components/SourceDetails';
 
 function knowledgeError(error: unknown): string {
   if (error instanceof ApiError && [404, 501].includes(error.status)) {
@@ -38,27 +40,12 @@ export default function OnlineKnowledgeLibrary({
     <section className="knowledge-library" aria-labelledby="online-knowledge-title">
       <div className="section-heading">
         <div>
-          <h2 id="online-knowledge-title">带着问题，找到学习参考</h2>
+          <h2 id="online-knowledge-title">查询学习参考</h2>
           <p className="muted">查询当前服务已发布的公共知识，核对摘要与来源版本。</p>
         </div>
         <StatusBadge label="在线查询" />
       </div>
-      <div className="role-picker" role="group" aria-label="在线查询岗位方向">
-        {(Object.keys(roles) as Role[]).map((key) => (
-          <button
-            key={key}
-            className={`role-option ${role === key ? 'active' : ''}`}
-            aria-pressed={role === key}
-            onClick={() => setRole(key)}
-          >
-            <span className="role-symbol" aria-hidden="true">
-              {roles[key].symbol}
-            </span>
-            <strong>{roles[key].label}</strong>
-            <span>{roles[key].description}</span>
-          </button>
-        ))}
-      </div>
+      <RolePicker value={role} onChange={setRole} label="在线查询岗位方向" />
       <div className="reference-notice">
         <Icon name="shield" />
         <p>
@@ -316,28 +303,11 @@ function KnowledgeResults({ role }: { role: Role }) {
                               ),
                             )}
                         </div>
-                        <dl className="source-meta">
-                          <div>
-                            <dt>来源标识</dt>
-                            <dd>{item.source_id}</dd>
-                          </div>
-                          <div>
-                            <dt>摘要版本</dt>
-                            <dd>{item.source_version}</dd>
-                          </div>
-                        </dl>
-                        {sourceUrl(item.source_url) ? (
-                          <a
-                            className="source-link"
-                            href={sourceUrl(item.source_url)}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            阅读官方来源 <span aria-hidden="true">↗</span>
-                          </a>
-                        ) : (
-                          <p className="small muted">来源链接不可用，请联系维护者核对。</p>
-                        )}
+                        <SourceDetails
+                          url={item.source_url}
+                          version={item.source_version}
+                          sourceId={item.source_id}
+                        />
                         <p className="small muted">项目整理摘要，并非官方原文；仅供学习参考。</p>
                       </li>
                     ))}
