@@ -82,5 +82,6 @@ jobs:
         run: |
           node ../scripts/test_frontend_events.mjs
           node ../scripts/test_frontend_knowledge.mjs
+          node ../scripts/test_frontend_workspace.mjs
           npm run format:check
           npm run build
