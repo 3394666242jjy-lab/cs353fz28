@@ -24,6 +24,7 @@ interface DocDetail extends DocItem {
 
 interface DocumentManagerProps {
   userId?: string;
+  revision?: number;
   /** 删除资料后通知父组件，避免后续分析继续引用已删除资料。 */
   onDeleted?: (id: string) => void;
   onUpdated?: (id: string) => void;
@@ -31,9 +32,9 @@ interface DocumentManagerProps {
 
 const statusLabels: Record<DocStatus, string> = {
   uploaded: '已上传',
-  processing: '处理中',
-  ready: '已就绪',
-  failed: '失败',
+  processing: '解析中',
+  ready: '可使用',
+  failed: '解析失败',
   deleted: '已删除',
 };
 
@@ -84,7 +85,12 @@ function extractionText(data: {
   return data.extracted_text ?? '';
 }
 
-export default function DocumentManager({ userId, onDeleted, onUpdated }: DocumentManagerProps) {
+export default function DocumentManager({
+  userId,
+  revision = 0,
+  onDeleted,
+  onUpdated,
+}: DocumentManagerProps) {
   const [mode, setMode] = useState<Mode>(userId ? 'real' : 'sample');
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -156,7 +162,9 @@ export default function DocumentManager({ userId, onDeleted, onUpdated }: Docume
     setDetail(null);
     setPendingDeleteId(null);
     setPendingIndex(null);
+  }, [mode, userId]);
 
+  useEffect(() => {
     if (mode === 'sample') {
       setDocs(SAMPLE_DOCS);
       setLoading(false);
@@ -189,7 +197,15 @@ export default function DocumentManager({ userId, onDeleted, onUpdated }: Docume
           }
           cursor = response.data.next_cursor ?? undefined;
         } while (cursor);
-        if (!controller.signal.aborted) setDocs(all);
+        if (!controller.signal.aborted) {
+          setDocs(all);
+          setDetail((previous) => {
+            const doc = all.find((item) => item.id === previous?.id);
+            return previous && doc && doc.version === previous.version
+              ? { ...previous, status: doc.status, error: doc.error }
+              : previous;
+          });
+        }
       } catch (err) {
         if (isAbortError(err)) return;
         setError(`加载资料失败：${describeError(err).message}`);
@@ -199,7 +215,7 @@ export default function DocumentManager({ userId, onDeleted, onUpdated }: Docume
     }
     void load();
     return () => controller.abort();
-  }, [mode, userId]);
+  }, [mode, userId, revision]);
 
   async function openDoc(doc: DocItem) {
     setSelectedId(doc.id);
@@ -335,7 +351,7 @@ export default function DocumentManager({ userId, onDeleted, onUpdated }: Docume
     <section className="document-manager" aria-labelledby="doc-manager-title">
       <div className="section-heading">
         <div>
-          <h3 id="doc-manager-title">管理已上传的资料</h3>
+          <h3 id="doc-manager-title">资料库</h3>
         </div>
         <div className="mode-switch" role="group" aria-label="资料模式">
           <button
@@ -356,10 +372,7 @@ export default function DocumentManager({ userId, onDeleted, onUpdated }: Docume
           </button>
         </div>
       </div>
-      <p className="small muted">
-        编辑会生成新版本；删除后查询立即被阻断，旧分析会显示过期或来源不可用。
-        {mode === 'sample' ? ' 当前为样例模式，不调用后端。' : ''}
-      </p>
+      {mode === 'sample' && <p className="small muted">合成资料，用于体验；不会保存到后端。</p>}
 
       {error && (
         <div className="error-box" role="alert">
