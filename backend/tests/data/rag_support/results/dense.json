@@ -1,6 +1,6 @@
 {
   "arm": "dense",
-  "metric_version": "support-eval-v1",
+  "metric_version": "support-eval-v2",
   "counts": {
     "total": 12,
     "decided": 12,
@@ -42,6 +42,12 @@
   "stale_citation_rate": 0.0,
   "citation_precision": 0.4,
   "citation_recall": 1.0,
+  "numeric_anchor_rate": null,
+  "numeric_anchor": {
+    "applicable": 0,
+    "covered": 0,
+    "failures": []
+  },
   "confusion": {
     "supported": {
       "supported": 3,

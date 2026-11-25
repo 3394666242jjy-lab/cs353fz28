@@ -1,6 +1,6 @@
 {
   "arm": "full-context",
-  "metric_version": "support-eval-v1",
+  "metric_version": "support-eval-v2",
   "counts": {
     "total": 12,
     "decided": 12,
@@ -40,6 +40,19 @@
   "stale_citation_rate": 0.0,
   "citation_precision": 0.3076923076923077,
   "citation_recall": 0.6666666666666666,
+  "numeric_anchor_rate": 0.0,
+  "numeric_anchor": {
+    "applicable": 1,
+    "covered": 0,
+    "failures": [
+      {
+        "item_id": "s_beta_04",
+        "missing": [
+          "300"
+        ]
+      }
+    ]
+  },
   "confusion": {
     "supported": {
       "supported": 3,
