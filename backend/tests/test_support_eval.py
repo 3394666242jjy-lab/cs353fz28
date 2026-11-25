@@ -42,6 +42,10 @@ def result(
     context_chars: int = 100,
     dropped_blocks: int = 0,
     total_ms: float = 10.0,
+    retrieval_ms: float = 0.0,
+    embedding_ms: float = 0.0,
+    store_ms: float = 0.0,
+    judge_ms: float = 0.0,
 ) -> SupportResult:
     """构造一条评测结果；未判定用 judged=None 表达。"""
     return SupportResult(
@@ -56,6 +60,10 @@ def result(
         context_blocks=3,
         dropped_blocks=dropped_blocks,
         total_ms=total_ms,
+        retrieval_ms=retrieval_ms,
+        embedding_ms=embedding_ms,
+        store_ms=store_ms,
+        judge_ms=judge_ms,
     )
 
 
@@ -259,6 +267,59 @@ def test_resolution_note_scales_with_sample_size():
     assert resolution_note(0).startswith("无可判定样本")
     assert "1.0000" in resolution_note(1)
     assert "0.0833" in resolution_note(12)
+
+
+def test_latency_is_split_into_stages_with_rerank_residual():
+    """分阶段耗时：重排残差 = 整段检索 − embedding − 向量库，负数按 0 处理。"""
+    summary = summarize(
+        [
+            result(retrieval_ms=300.0, embedding_ms=120.0, store_ms=80.0, judge_ms=900.0),
+            result(retrieval_ms=100.0, embedding_ms=90.0, store_ms=40.0, judge_ms=700.0),
+        ],
+        arm="hybrid_rerank",
+    )
+
+    latency = summary["latency_ms"]
+    assert latency["mean_embedding"] == 105.0
+    assert latency["mean_store"] == 60.0
+    assert latency["mean_rerank"] == 50.0  # (100 + 0) / 2，第二题残差被截到 0
+    assert latency["mean_judge"] == 800.0
+    assert latency["retrieval_p50"] == 100.0
+
+
+def test_full_context_arm_reports_no_retrieval_instead_of_zero_cost():
+    """不检索的臂要写明"不检索"，不能让检索三段显示成 0 成本。"""
+    summary = summarize([result(judge_ms=2600.0)], arm="full-context")
+
+    text = render_markdown(summary, judge_version="qwen-plus")
+
+    assert "分阶段耗时：不检索" in text
+    assert "2600 ms" in text
+
+
+def test_retrieval_arm_report_shows_each_stage():
+    """检索臂要能看到 embedding / 向量库 / 重排残差 / 判定四段。"""
+    summary = summarize(
+        [result(retrieval_ms=300.0, embedding_ms=120.0, store_ms=80.0, judge_ms=900.0)],
+        arm="hybrid_rerank",
+    )
+
+    text = render_markdown(summary, judge_version="qwen-plus")
+
+    assert "embedding 120" in text
+    assert "向量库 80" in text
+    assert "重排等残差 100" in text
+    assert "判定 900" in text
+
+
+def test_comparison_marks_missing_stage_as_dash():
+    """并排表里不检索的臂该显示"—"，避免被当成 0 毫秒。"""
+    topk = summarize([result(retrieval_ms=300.0, embedding_ms=120.0, store_ms=80.0)], arm="dense")
+    full = summarize([result(judge_ms=2600.0)], arm="full-context")
+
+    text = render_comparison([topk, full])
+
+    assert "| 平均 embedding（ms） | 120 | — |" in text
 
 
 @pytest.mark.parametrize(

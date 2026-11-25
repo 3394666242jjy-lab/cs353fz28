@@ -254,8 +254,11 @@ def make_retriever(settings, *, no_proxy: bool, rebuild: bool):
 
     async def retrieve(strategy: str, item, *, top_k: int | None):
         inner = mods.m2.backend()
-        embedder = mods.m2.TimedEmbedder(inner.get_embedding_provider(settings))
-        store = mods.m2.TimedStore(inner.get_vector_store(settings))
+        # 每个臂必须用自己的 retrieval_strategy 构造依赖：漏掉这一句，三个"检索臂"
+        # 会全部按同一个默认策略跑，数字看起来完全一致却毫无意义。
+        arm_settings = settings.model_copy(update={"retrieval_strategy": strategy})
+        embedder = mods.m2.TimedEmbedder(inner.get_embedding_provider(arm_settings))
+        store = mods.m2.TimedStore(inner.get_vector_store(arm_settings))
 
         async def resolver(chunk_ids: list[str]) -> dict[str, str]:
             return {
@@ -263,7 +266,7 @@ def make_retriever(settings, *, no_proxy: bool, rebuild: bool):
             }
 
         source = inner.QdrantEvidenceSource(
-            settings,
+            arm_settings,
             embedder=embedder,
             store=store,
             sparse_encoder=encoder,
@@ -285,7 +288,20 @@ def make_retriever(settings, *, no_proxy: bool, rebuild: bool):
             for candidate in result.evidence
             if candidate.chunk_id in chunk_texts
         ]
-        return blocks, elapsed_ms, result.retrieval_config_version
+        # 分阶段耗时：与 dev/13 口径一致，embedding 与向量库各计一段，其余算重排残差。
+        timing = {
+            "retrieval_ms": elapsed_ms,
+            "embedding_ms": embedder.elapsed_ms,
+            "store_ms": store.elapsed_ms,
+            "config_version": result.retrieval_config_version,
+        }
+        # 自证：检索配置版本必须与臂名一致。少了这一句，臂配错策略也看不出来。
+        if not result.retrieval_config_version.startswith(strategy):
+            raise RuntimeError(
+                f"对照臂 {strategy} 实际跑的是 {result.retrieval_config_version}；"
+                "检索配置与臂名不一致，结果不可比"
+            )
+        return blocks, timing, result.retrieval_config_version
 
     return SimpleNamespace(
         prepare=prepare, set_deleted=set_deleted, retrieve=retrieve, documents=documents
@@ -316,6 +332,11 @@ def write_result(path: Path, result) -> None:
         "context_blocks": result.context_blocks,
         "dropped_blocks": result.dropped_blocks,
         "total_ms": result.total_ms,
+        "retrieval_ms": result.retrieval_ms,
+        "embedding_ms": result.embedding_ms,
+        "store_ms": result.store_ms,
+        "judge_ms": result.judge_ms,
+        "retrieval_config_version": result.retrieval_config_version,
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,
     }
@@ -352,14 +373,14 @@ def run_arm(
         if arm == "full-context":
             blocks = pinned_chunk_blocks(item, index, excluded_documents=excluded)
             context = support_eval.assemble_context(blocks, max_chars=max_context_chars)
-            elapsed_ms = 0.0
+            timing = {"retrieval_ms": 0.0, "embedding_ms": 0.0, "store_ms": 0.0}
         else:
             if retriever is None:
                 raise SystemExit("检索臂需要构造检索路径")
             if excluded:
                 asyncio.run(retriever.set_deleted(sorted(excluded), deleted=True))
             try:
-                blocks, elapsed_ms, _ = asyncio.run(retriever.retrieve(arm, item, top_k=top_k))
+                blocks, timing, _ = asyncio.run(retriever.retrieve(arm, item, top_k=top_k))
             finally:
                 if excluded:
                     asyncio.run(retriever.set_deleted(sorted(excluded), deleted=False))
@@ -373,7 +394,8 @@ def run_arm(
         else:
             judged, usage = _judge_sync(judge, requirement=item.requirement, context=context.text)
             input_tokens, output_tokens = usage.input_tokens, usage.output_tokens
-        total_ms = elapsed_ms + (time.perf_counter() - started) * 1000
+        judge_ms = (time.perf_counter() - started) * 1000
+        total_ms = timing["retrieval_ms"] + judge_ms
 
         result = support_eval.SupportResult(
             item_id=item.id,
@@ -389,13 +411,19 @@ def run_arm(
             total_ms=total_ms,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            retrieval_ms=timing["retrieval_ms"],
+            embedding_ms=timing["embedding_ms"],
+            store_ms=timing["store_ms"],
+            judge_ms=judge_ms,
+            retrieval_config_version=timing.get("config_version", ""),
         )
         results.append(result)
         write_result(path, result)
         status = "未判定" if judged is None else judged.status
         print(
             f"  {item.id} ({item.axis}) -> {status}；上下文 {context.chars} 字"
-            f"/{len(context.block_ids)} 块（跳过 {len(context.dropped_ids)}），{total_ms:.0f} ms"
+            f"/{len(context.block_ids)} 块（跳过 {len(context.dropped_ids)}），"
+            f"检索 {timing['retrieval_ms']:.0f} + 判定 {judge_ms:.0f} = {total_ms:.0f} ms"
         )
     return results
 

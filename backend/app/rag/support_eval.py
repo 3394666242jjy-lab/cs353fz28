@@ -197,7 +197,13 @@ def assemble_context(blocks: Sequence[tuple[str, str]], *, max_chars: int) -> As
 
 @dataclass(frozen=True)
 class SupportResult:
-    """一条题目的评测结果；``judged_status`` 为 ``None`` 表示未判定。"""
+    """一条题目的评测结果；``judged_status`` 为 ``None`` 表示未判定。
+
+    耗时按阶段拆开，口径与 dev/13 的检索评测一致：``embedding_ms`` 是向量化，
+    ``store_ms`` 是向量库检索，``retrieval_ms`` 是整段检索（含重排与融合），
+    ``judge_ms`` 是判定模型调用。``retrieval_ms - embedding_ms - store_ms`` 的残差
+    就是重排等未单独计时的检索开销；全资料臂不检索，三段检索耗时都为 0。
+    """
 
     item_id: str
     axis: str
@@ -212,6 +218,12 @@ class SupportResult:
     total_ms: float
     input_tokens: int = 0
     output_tokens: int = 0
+    retrieval_ms: float = 0.0
+    embedding_ms: float = 0.0
+    store_ms: float = 0.0
+    judge_ms: float = 0.0
+    # 检索配置版本：空字符串表示该臂不检索（全资料基线）。
+    retrieval_config_version: str = ""
 
 
 def _decided(results: Sequence[SupportResult]) -> list[SupportResult]:
@@ -317,6 +329,10 @@ def summarize(results: Sequence[SupportResult], *, arm: str) -> dict:
             "undecided": len(results) - len(decided),
             "by_axis": by_axis,
         },
+        # 本臂实际用到的检索配置版本：臂配错策略时这里会露出来。
+        "config_versions": sorted(
+            {r.retrieval_config_version for r in results if r.retrieval_config_version}
+        ),
         "status_accuracy": status_accuracy(results),
         "false_support_rate": false_support_rate(results),
         "over_refusal_rate": over_refusal_rate(results),
@@ -341,7 +357,34 @@ def summarize(results: Sequence[SupportResult], *, arm: str) -> dict:
             "count": len(latencies),
             "p50": round(percentile(latencies, 0.50), 1),
             "p95": round(percentile(latencies, 0.95), 1),
+            **_latency_stages(decided),
         },
+    }
+
+
+def _mean_or_none(values: Sequence[float]) -> float | None:
+    return round(sum(values) / len(values), 1) if values else None
+
+
+def _latency_stages(decided: Sequence[SupportResult]) -> dict:
+    """分阶段耗时：embedding / 向量库检索 / 重排残差 / 判定模型。
+
+    全资料臂不检索，它的检索三段恒为 0 而不是缺失——报告里一眼能看出"这条臂没有检索
+    开销"，不会被误读成"检索零成本"。
+    """
+    embedding = [r.embedding_ms for r in decided]
+    store = [r.store_ms for r in decided]
+    retrieval = [r.retrieval_ms for r in decided]
+    judge = [r.judge_ms for r in decided]
+    # 重排等未单独计时的检索开销：用整段检索减去已计时的两段，负数按 0 处理。
+    rerank = [max(0.0, r.retrieval_ms - r.embedding_ms - r.store_ms) for r in decided]
+    return {
+        "mean_embedding": _mean_or_none(embedding),
+        "mean_store": _mean_or_none(store),
+        "mean_rerank": _mean_or_none(rerank),
+        "mean_judge": _mean_or_none(judge),
+        "retrieval_p50": round(percentile(retrieval, 0.50), 1) if retrieval else None,
+        "retrieval_p95": round(percentile(retrieval, 0.95), 1) if retrieval else None,
     }
 
 
@@ -368,6 +411,32 @@ def _fmt(value: float | None) -> str:
     return "无样本" if value is None else f"{value:.4f}"
 
 
+def _fmt_ms(value: float | None) -> str:
+    return "—" if value is None else f"{value:.0f}"
+
+
+def _config_lines(summary: dict) -> list[str]:
+    """把本臂实际用到的检索配置版本写进报告；全资料臂写明"不检索"。"""
+    versions = summary.get("config_versions") or []
+    if not versions:
+        return ["- 检索配置：不检索（全资料基线）"]
+    return [f"- 检索配置：`{version}`" for version in versions]
+
+
+def _latency_line(latency: dict) -> str:
+    """把分阶段耗时写成一行；检索三段全 0 时标注"不检索"，不装成零开销。"""
+    if not latency.get("retrieval_p50"):
+        return f"分阶段耗时：不检索（仅判定 {_fmt_ms(latency.get('mean_judge'))} ms）"
+    return (
+        f"分阶段耗时（均值，ms）：embedding {_fmt_ms(latency.get('mean_embedding'))} / "
+        f"向量库 {_fmt_ms(latency.get('mean_store'))} / "
+        f"重排等残差 {_fmt_ms(latency.get('mean_rerank'))} / "
+        f"判定 {_fmt_ms(latency.get('mean_judge'))}；"
+        f"检索段 P50 {_fmt_ms(latency.get('retrieval_p50'))} / "
+        f"P95 {_fmt_ms(latency.get('retrieval_p95'))}"
+    )
+
+
 def render_markdown(
     summary: dict,
     *,
@@ -382,6 +451,7 @@ def render_markdown(
         f"- 指标口径：`{summary['metric_version']}`；判定模型：`{judge_version}`",
         f"- 题目 {counts['total']} 条，已判定 {counts['decided']} 条，"
         f"未判定 {counts['undecided']} 条",
+        *_config_lines(summary),
         f"- {resolution_note(counts['decided'])}",
         "",
         "| 指标 | 值 |",
@@ -391,14 +461,15 @@ def render_markdown(
         lines.append(f"| {label} (`{key}`) | {_fmt(summary[key])} |")
 
     context = summary["context"]
+    latency = summary["latency_ms"]
     lines += [
         "",
         f"上下文体积：平均 {context['mean_chars']:.0f} 字 / 最多 {context['max_chars']} 字 / "
         f"平均 {context['mean_blocks']:.1f} 块；超预算被跳过的题 {context['truncated_items']} 条",
         f"成本：输入 {summary['cost']['input_tokens']} tokens，"
         f"输出 {summary['cost']['output_tokens']} tokens；"
-        f"耗时 P50 {summary['latency_ms']['p50']:.0f} ms / "
-        f"P95 {summary['latency_ms']['p95']:.0f} ms",
+        f"总耗时 P50 {latency['p50']:.0f} ms / P95 {latency['p95']:.0f} ms",
+        _latency_line(latency),
         "",
         "| 期望 \\ 判定 | supported | partial | not_evidenced |",
         "| --- | --- | --- | --- |",
@@ -430,6 +501,20 @@ def render_comparison(summaries: Sequence[dict], *, notes: Sequence[str] = ()) -
     lines.append(f"| 平均上下文（字） | {cells} |")
     cells = " | ".join(f"{item['context']['mean_blocks']:g}" for item in summaries)
     lines.append(f"| 平均上下文（块） | {cells} |")
+    # 耗时按阶段并排：全资料臂不检索，这几行会显示"—"，一眼能看出不可跨臂比较。
+    for key, label in (
+        ("mean_embedding", "平均 embedding（ms）"),
+        ("mean_store", "平均向量库检索（ms）"),
+        ("mean_rerank", "平均重排残差（ms）"),
+        ("mean_judge", "平均判定（ms）"),
+    ):
+        cells = " | ".join(
+            "—"
+            if not item["latency_ms"].get("retrieval_p50") and key != "mean_judge"
+            else _fmt_ms(item["latency_ms"].get(key))
+            for item in summaries
+        )
+        lines.append(f"| {label} | {cells} |")
     for note in notes:
         lines += ["", f"> {note}"]
     return "\n".join(lines)
