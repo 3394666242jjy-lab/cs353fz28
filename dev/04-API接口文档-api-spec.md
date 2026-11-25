@@ -66,7 +66,7 @@ M1 用轮询查询 executions，终态停止；缺少证据时直接返回分析
 
 M1 沿用现有 Evidence.locator 联合类型：PDF 为 {"kind":"pdf","page":2}，页码从 1 开始且对应上传原文件；Markdown/TXT 为 {"kind":"text","line_start":15,"line_end":16}。PDF 单个 chunk 不跨页，quote 来自对应页的实际提取文本，A 通过已鉴权证据接口展示片段与页码；不需要为页码新增一套字段，也不公开本地文件路径。此轮不要求浏览器内嵌完整 PDF 阅读器。
 
-自 M3 起（[dev/19](19-locator契约与span定案-rag-locator-contract.md)），文本 locator 可额外携带可选的字符区间：{"kind":"text","line_start":15,"line_end":16,"char_start":240,"char_end":331}。它相对解析后的归一化全文、0 起始、半开区间，要么整对出现要么都不出现，且必须能精确切出 quote。新索引的文本资料带该字段；历史数据与 PDF 不带，消费方在缺省时退回行号，不得按比例换算。
+自 M3 起（[dev/19](19-locator契约与span定案-rag-locator-contract.md)），两种 locator 都可额外携带可选的字符区间：文本为 {"kind":"text","line_start":15,"line_end":16,"char_start":240,"char_end":331}（相对解析后的归一化全文），PDF 为 {"kind":"pdf","page":2,"char_start":0,"char_end":64}（相对**该页**文本）。两种情况都是 0 起始半开区间，要么整对出现要么都不出现，且必须能精确切出 quote。新索引带该字段；历史数据不带，消费方在缺省时退回行号或页码，不得按比例换算。
 
 ## 岗位与分析
 

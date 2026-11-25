@@ -88,7 +88,7 @@ pending_input 对外只公开已允许的交互字段：kind（clarification/pla
 
 公开 API 依据 requirement_snapshot 将 requirement 文本和 category 附加到每条 match。M1 的具体响应、证据原文和三类结果见 [合成开发样例](../examples/README.md)，不要把示例 ID 或预期结论硬编码到真实执行路径。
 
-locator 示例：`{"kind":"pdf","page":2}` 或 `{"kind":"text","line_start":10,"line_end":18}`。只有实际解析获得的位置才能写入。文本 chunk 还可带可选的 `char_start`/`char_end`（相对归一化全文的 0 起始半开区间，必须与 `quote` 逐字一致，要么整对出现要么都不出现），语义见 [dev/19](19-locator契约与span定案-rag-locator-contract.md)；旧记录只有行号仍然合法。
+locator 示例：`{"kind":"pdf","page":2}` 或 `{"kind":"text","line_start":10,"line_end":18}`。只有实际解析获得的位置才能写入。两种 locator 都可带可选的 `char_start`/`char_end`（0 起始半开区间，必须与 `quote` 逐字一致，要么整对出现要么都不出现）：文本相对归一化全文，PDF 相对该页文本。语义见 [dev/19](19-locator契约与span定案-rag-locator-contract.md)；旧记录只有行号或页码仍然合法，但不会因这次改动自动获得 span。
 
 ## 索引初稿
 
