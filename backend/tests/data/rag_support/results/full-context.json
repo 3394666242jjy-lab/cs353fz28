@@ -1,0 +1,75 @@
+{
+  "arm": "full-context",
+  "metric_version": "support-eval-v1",
+  "counts": {
+    "total": 12,
+    "decided": 0,
+    "undecided": 12,
+    "by_axis": {
+      "fully_supported": {
+        "count": 3,
+        "decided": 0,
+        "false_support": 0
+      },
+      "partially_supported": {
+        "count": 3,
+        "decided": 0,
+        "false_support": 0
+      },
+      "no_evidence": {
+        "count": 3,
+        "decided": 0,
+        "false_support": 0
+      },
+      "old_version": {
+        "count": 2,
+        "decided": 0,
+        "false_support": 0
+      },
+      "deleted": {
+        "count": 1,
+        "decided": 0,
+        "false_support": 0
+      }
+    }
+  },
+  "status_accuracy": null,
+  "false_support_rate": null,
+  "over_refusal_rate": null,
+  "stale_citation_rate": null,
+  "citation_precision": null,
+  "citation_recall": null,
+  "confusion": {
+    "supported": {
+      "supported": 0,
+      "partial": 0,
+      "not_evidenced": 0
+    },
+    "partial": {
+      "supported": 0,
+      "partial": 0,
+      "not_evidenced": 0
+    },
+    "not_evidenced": {
+      "supported": 0,
+      "partial": 0,
+      "not_evidenced": 0
+    }
+  },
+  "context": {
+    "mean_chars": 4072.6,
+    "max_chars": 4149,
+    "p95_chars": 4149.0,
+    "mean_blocks": 10.8,
+    "truncated_items": 0
+  },
+  "cost": {
+    "input_tokens": 0,
+    "output_tokens": 0
+  },
+  "latency_ms": {
+    "count": 0,
+    "p50": 0.0,
+    "p95": 0.0
+  }
+}
