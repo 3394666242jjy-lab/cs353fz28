@@ -4246,6 +4246,30 @@
             "type": "integer",
             "minimum": 1.0,
             "title": "Line End"
+          },
+          "char_start": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char Start"
+          },
+          "char_end": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char End"
           }
         },
         "additionalProperties": false,
@@ -4255,7 +4279,8 @@
           "line_start",
           "line_end"
         ],
-        "title": "TextLocator"
+        "title": "TextLocator",
+        "description": "文本定位：行号是权威，字符区间是可选精化。\n\n``char_start``/``char_end`` 相对解析后的归一化全文（LF 换行），0 起始、半开区间，\n语义见 dev/19。M2 的 chunk 等于整行区间，因此这两个字段可以省略；一旦出现就必须\n同时出现，并且能精确切出 quote。缺省时消费方退回行号，不允许按比例换算。"
       },
       "TokenResult": {
         "properties": {
