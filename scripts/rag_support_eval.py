@@ -232,7 +232,8 @@ def make_retriever(settings, *, no_proxy: bool, rebuild: bool):
 
     async def set_deleted(document_ids: Sequence[str], *, deleted: bool) -> None:
         """按需物理删除/恢复整份文档的向量：删除轴之外的问题不受影响。"""
-        store = mods.m2.get_vector_store(settings)
+        inner = mods.m2.backend()
+        store = inner.get_vector_store(settings)
         for document_id in document_ids:
             document = documents[document_id]
             if deleted:
@@ -240,7 +241,7 @@ def make_retriever(settings, *, no_proxy: bool, rebuild: bool):
                     user_id=document["user_id"], document_id=document_id
                 )
                 continue
-            await mods.m2.index_document(
+            await inner.index_document(
                 (mods.m2.CORPUS_DIR / document["path"]).read_bytes(),
                 user_id=document["user_id"],
                 document_id=document_id,
@@ -252,15 +253,16 @@ def make_retriever(settings, *, no_proxy: bool, rebuild: bool):
             )
 
     async def retrieve(strategy: str, item, *, top_k: int | None):
-        embedder = mods.m2.TimedEmbedder(mods.m2.get_embedding_provider(settings))
-        store = mods.m2.TimedStore(mods.m2.get_vector_store(settings))
+        inner = mods.m2.backend()
+        embedder = mods.m2.TimedEmbedder(inner.get_embedding_provider(settings))
+        store = mods.m2.TimedStore(inner.get_vector_store(settings))
 
         async def resolver(chunk_ids: list[str]) -> dict[str, str]:
             return {
                 chunk_id: chunk_texts[chunk_id] for chunk_id in chunk_ids if chunk_id in chunk_texts
             }
 
-        source = mods.m2.QdrantEvidenceSource(
+        source = inner.QdrantEvidenceSource(
             settings,
             embedder=embedder,
             store=store,
@@ -278,7 +280,11 @@ def make_retriever(settings, *, no_proxy: bool, rebuild: bool):
             top_k=top_k,
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
-        blocks = [(evidence.chunk_id, evidence.quote) for evidence in result.evidence]
+        blocks = [
+            (candidate.chunk_id, chunk_texts[candidate.chunk_id])
+            for candidate in result.evidence
+            if candidate.chunk_id in chunk_texts
+        ]
         return blocks, elapsed_ms, result.retrieval_config_version
 
     return SimpleNamespace(
@@ -353,7 +359,7 @@ def run_arm(
             if excluded:
                 asyncio.run(retriever.set_deleted(sorted(excluded), deleted=True))
             try:
-                blocks, elapsed_ms, _ = retriever.retrieve(arm, item, top_k=top_k)
+                blocks, elapsed_ms, _ = asyncio.run(retriever.retrieve(arm, item, top_k=top_k))
             finally:
                 if excluded:
                     asyncio.run(retriever.set_deleted(sorted(excluded), deleted=False))
