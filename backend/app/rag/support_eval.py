@@ -21,6 +21,7 @@ Recall@3 已经饱和到 100%，却没有任何数字能说明"把部分支持�
 会静默指向错误片段。锚点必须在指定版本里恰好命中一个 chunk，否则解析直接失败。
 """
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -46,7 +47,8 @@ SUPPORT_AXES: tuple[str, ...] = (
 )
 
 # 口径版本：指标定义或标注字段一改就换版本号，旧结果不得被当成同一条件复述。
-SUPPORT_METRIC_VERSION = "support-eval-v1"
+# v2：新增数字锚点覆盖率（引用里能否核对到要求中的数字）。
+SUPPORT_METRIC_VERSION = "support-eval-v2"
 
 
 class EvidenceAnchor(ContractModel):
@@ -224,6 +226,8 @@ class SupportResult:
     judge_ms: float = 0.0
     # 检索配置版本：空字符串表示该臂不检索（全资料基线）。
     retrieval_config_version: str = ""
+    # 要求原文：数字锚点核对与人工复核都要用，落盘后不必回查标注文件。
+    requirement: str = ""
 
 
 def _decided(results: Sequence[SupportResult]) -> list[SupportResult]:
@@ -303,8 +307,98 @@ def confusion_matrix(results: Sequence[SupportResult]) -> dict[str, dict[str, in
     return matrix
 
 
-def summarize(results: Sequence[SupportResult], *, arm: str) -> dict:
-    """汇总成可落盘的字典；未判定、上下文体积与成本都单列，不混进比率。"""
+# 数字与版本号锚点：只要原文里出现过同样的数，就说明模型有机会核对它。
+_NUMERIC_ANCHOR = re.compile(r"\d+(?:\.\d+)*")
+
+
+def numeric_anchors(text: str) -> tuple[str, ...]:
+    """取出文本里的数字/版本号锚点（去重、保序）。
+
+    只抓数字是因为它可机械核对：要求写了"每秒约 300 次请求"，被引用的片段里到底有没有
+    "300"，不需要模型判断。词语级核对需要同义词表，不属于这一层的职责。
+    """
+    seen: list[str] = []
+    for match in _NUMERIC_ANCHOR.finditer(text):
+        value = match.group(0)
+        if value not in seen:
+            seen.append(value)
+    return tuple(seen)
+
+
+def _contains_anchor(text: str, anchor: str) -> bool:
+    """按"独立数字"匹配：``1300`` 不算包含 ``300``，``16.25`` 不算包含 ``16.2``。"""
+    pattern = re.compile(rf"(?<![\d.]){re.escape(anchor)}(?![\d.])")
+    return pattern.search(text) is not None
+
+
+def uncovered_numeric_anchors(requirement: str, cited_texts: Sequence[str]) -> tuple[str, ...]:
+    """要求里的数字锚点中，被引用片段**一处都没有**覆盖的那些。
+
+    返回空表示"所有数字都能在引用里核对到"；返回非空就是在提醒：模型给了结论，
+    但它引用的原文里根本没有这个数。
+    """
+    texts = list(cited_texts)
+    return tuple(
+        anchor
+        for anchor in numeric_anchors(requirement)
+        if not any(_contains_anchor(text, anchor) for text in texts)
+    )
+
+
+def numeric_anchor_failures(
+    results: Sequence[SupportResult], chunk_texts: Mapping[str, str]
+) -> list[dict]:
+    """列出"判了 supported/partial，但引用里核对不到要求中数字"的题目。"""
+    failures = []
+    for result in _decided(results):
+        if result.judged_status not in {"supported", "partial"} or not result.cited:
+            continue
+        missing = uncovered_numeric_anchors(
+            result.requirement,
+            [chunk_texts[chunk_id] for chunk_id in result.cited if chunk_id in chunk_texts],
+        )
+        if missing:
+            failures.append({"item_id": result.item_id, "missing": list(missing)})
+    return failures
+
+
+def numeric_anchor_rate(
+    results: Sequence[SupportResult], chunk_texts: Mapping[str, str]
+) -> float | None:
+    """数字锚点覆盖率：要求里写了数字的题里，引用片段能核对到这些数字的比例。
+
+    它补的是"引用召回"管不到的一段：召回只问"有没有引用标注的那一块"，不问
+    "被引用的原文里到底有没有被核对的数"。分母只数"要求含数字、且判成 supported/partial、
+    且有引用"的题——其余题目没有可核对的锚点，不能算成通过。
+    """
+    checked = 0
+    covered = 0
+    for result in _decided(results):
+        if result.judged_status not in {"supported", "partial"} or not result.cited:
+            continue
+        anchors = numeric_anchors(result.requirement)
+        if not anchors:
+            continue
+        checked += 1
+        cited_texts = [
+            chunk_texts[chunk_id] for chunk_id in result.cited if chunk_id in chunk_texts
+        ]
+        if not uncovered_numeric_anchors(result.requirement, cited_texts):
+            covered += 1
+    return _rate(covered, checked)
+
+
+def summarize(
+    results: Sequence[SupportResult],
+    *,
+    arm: str,
+    chunk_texts: Mapping[str, str] | None = None,
+) -> dict:
+    """汇总成可落盘的字典；未判定、上下文体积与成本都单列，不混进比率。
+
+    ``chunk_texts`` 给出时才算数字锚点覆盖率——那是一项机械核对，需要被引用片段的原文；
+    不给就标注为未判定，而不是当作通过。
+    """
     decided = _decided(results)
     by_axis: dict[str, dict[str, int]] = {}
     for axis in SUPPORT_AXES:
@@ -339,6 +433,10 @@ def summarize(results: Sequence[SupportResult], *, arm: str) -> dict:
         "stale_citation_rate": stale_citation_rate(results),
         "citation_precision": citation_precision(results),
         "citation_recall": citation_recall(results),
+        "numeric_anchor_rate": (
+            numeric_anchor_rate(results, chunk_texts) if chunk_texts is not None else None
+        ),
+        "numeric_anchor": _numeric_anchor_block(results, chunk_texts),
         "confusion": confusion_matrix(results),
         "context": {
             "mean_chars": round(sum(chars) / len(chars), 1) if chars else 0.0,
@@ -364,6 +462,32 @@ def summarize(results: Sequence[SupportResult], *, arm: str) -> dict:
 
 def _mean_or_none(values: Sequence[float]) -> float | None:
     return round(sum(values) / len(values), 1) if values else None
+
+
+def _numeric_anchor_block(
+    results: Sequence[SupportResult], chunk_texts: Mapping[str, str] | None
+) -> dict:
+    """数字锚点的可判定条数与失败清单；未提供原文时明确写"未判定"。"""
+    if chunk_texts is None:
+        return {"applicable": 0, "covered": 0, "failures": [], "note": "未提供语料原文，未判定"}
+    applicable = 0
+    covered = 0
+    for result in _decided(results):
+        if result.judged_status not in {"supported", "partial"} or not result.cited:
+            continue
+        if not numeric_anchors(result.requirement):
+            continue
+        applicable += 1
+        cited_texts = [
+            chunk_texts[chunk_id] for chunk_id in result.cited if chunk_id in chunk_texts
+        ]
+        if not uncovered_numeric_anchors(result.requirement, cited_texts):
+            covered += 1
+    return {
+        "applicable": applicable,
+        "covered": covered,
+        "failures": numeric_anchor_failures(results, chunk_texts),
+    }
 
 
 def _latency_stages(decided: Sequence[SupportResult]) -> dict:
@@ -404,6 +528,7 @@ _METRIC_LABELS = (
     ("stale_citation_rate", "引用失效证据率 ↓"),
     ("citation_precision", "引用正确率 ↑"),
     ("citation_recall", "引用召回 ↑"),
+    ("numeric_anchor_rate", "数字锚点覆盖率 ↑"),
 )
 
 
@@ -413,6 +538,20 @@ def _fmt(value: float | None) -> str:
 
 def _fmt_ms(value: float | None) -> str:
     return "—" if value is None else f"{value:.0f}"
+
+
+def _fmt_numeric_anchor(summary: dict) -> str:
+    """数字锚点覆盖率的三态显示：未判定 / 无可核对 / 比率。
+
+    它与其它比率不同——"没有可核对的数字"不是"没有数据"，也不该显示成 0。
+    """
+    block = summary.get("numeric_anchor") or {}
+    if block.get("note"):
+        return "未判定"
+    if not block.get("applicable"):
+        return "无可核对"
+    value = summary.get("numeric_anchor_rate")
+    return "无样本" if value is None else f"{value:.4f}"
 
 
 def _config_lines(summary: dict) -> list[str]:
@@ -460,6 +599,15 @@ def render_markdown(
     for key, label in _METRIC_LABELS:
         lines.append(f"| {label} (`{key}`) | {_fmt(summary[key])} |")
 
+    numeric = summary.get("numeric_anchor") or {}
+    if numeric.get("note"):
+        lines += ["", f"> 数字锚点覆盖率未判定：{numeric['note']}"]
+    elif not numeric.get("applicable"):
+        lines += ["", "> 数字锚点覆盖率无可核对锚点：本题集的要求里没有数字"]
+    if numeric.get("failures"):
+        lines += ["", "数字核对失败（判了有支持，但引用里找不到要求中的数字）："]
+        for failure in numeric["failures"]:
+            lines.append(f"- `{failure['item_id']}`：缺 {', '.join(failure['missing'])}")
     context = summary["context"]
     latency = summary["latency_ms"]
     lines += [
@@ -495,7 +643,10 @@ def render_comparison(summaries: Sequence[dict], *, notes: Sequence[str] = ()) -
         "| --- |" + " --- |" * len(summaries),
     ]
     for key, label in _METRIC_LABELS:
-        cells = " | ".join(_fmt(item[key]) for item in summaries)
+        if key == "numeric_anchor_rate":
+            cells = " | ".join(_fmt_numeric_anchor(item) for item in summaries)
+        else:
+            cells = " | ".join(_fmt(item[key]) for item in summaries)
         lines.append(f"| {label} | {cells} |")
     cells = " | ".join(f"{item['context']['mean_chars']:g}" for item in summaries)
     lines.append(f"| 平均上下文（字） | {cells} |")

@@ -19,6 +19,8 @@ from app.rag.support_eval import (
     citation_recall,
     confusion_matrix,
     false_support_rate,
+    numeric_anchor_rate,
+    numeric_anchors,
     over_refusal_rate,
     render_comparison,
     render_markdown,
@@ -27,6 +29,7 @@ from app.rag.support_eval import (
     stale_citation_rate,
     status_accuracy,
     summarize,
+    uncovered_numeric_anchors,
 )
 from app.schemas.analysis import DocumentVersion
 
@@ -46,6 +49,7 @@ def result(
     embedding_ms: float = 0.0,
     store_ms: float = 0.0,
     judge_ms: float = 0.0,
+    requirement: str = "",
 ) -> SupportResult:
     """构造一条评测结果；未判定用 judged=None 表达。"""
     return SupportResult(
@@ -64,6 +68,7 @@ def result(
         embedding_ms=embedding_ms,
         store_ms=store_ms,
         judge_ms=judge_ms,
+        requirement=requirement,
     )
 
 
@@ -320,6 +325,77 @@ def test_comparison_marks_missing_stage_as_dash():
     text = render_comparison([topk, full])
 
     assert "| 平均 embedding（ms） | 120 | — |" in text
+
+
+def test_numeric_anchors_extracts_digits_and_versions():
+    """数字锚点只抓数字/版本号：它们可以机械核对，词语同义需要词表。"""
+    assert numeric_anchors("项目 A 的压测吞吐为每秒约 300 次请求") == ("300",)
+    assert numeric_anchors("熟悉 PostgreSQL 16.2 与 FastAPI 0.115.0") == ("16.2", "0.115.0")
+    assert numeric_anchors("没有数字的要求") == ()
+    assert numeric_anchors("300 与 300 重复") == ("300",)
+
+
+def test_numeric_anchor_match_respects_digit_boundaries():
+    """独立数字才算命中：1300 不含 300，16.25 不含 16.2。"""
+    assert uncovered_numeric_anchors("每秒约 300 次", ["实测每秒约 1300 次"]) == ("300",)
+    assert uncovered_numeric_anchors("版本 16.2", ["版本 16.25"]) == ("16.2",)
+    assert uncovered_numeric_anchors("每秒约 300 次", ["实测每秒约 300 次"]) == ()
+
+
+def test_numeric_anchor_rate_only_counts_items_with_anchors():
+    """分母只数"要求含数字、判成有支持、且有引用"的题，其余不计入也不当作通过。"""
+    results = [
+        result(
+            judged="supported",
+            cited=("c1",),
+            expected_evidence=("c1",),
+            requirement="每秒约 300 次请求",
+        ),
+        result(
+            judged="partial",
+            cited=("c2",),
+            expected_evidence=("c2",),
+            requirement="缓存命中率 92%",
+        ),
+        result(judged="supported", cited=("c3",), requirement="没有数字的要求"),
+        result(judged="not_evidenced", cited=(), requirement="吞吐 1200 次"),
+    ]
+    texts = {"c1": "实测每秒约 300 次请求", "c2": "命中率提升明显", "c3": "无关"}
+
+    assert numeric_anchor_rate(results, texts) == pytest.approx(1 / 2)
+
+
+def test_numeric_anchor_rate_is_none_without_applicable_items():
+    """没有任何可核对锚点时返回空值，不能算成满分。"""
+    results = [result(judged="supported", cited=("c1",), requirement="没有数字")]
+
+    assert numeric_anchor_rate(results, {"c1": "无关"}) is None
+
+
+def test_summarize_marks_numeric_anchor_undetermined_without_texts():
+    """没有语料原文就标未判定，而不是当作通过。"""
+    summary = summarize([result(requirement="每秒约 300 次", cited=("c1",))], arm="dense")
+
+    assert summary["numeric_anchor_rate"] is None
+    assert "未判定" in summary["numeric_anchor"]["note"]
+
+
+def test_render_lists_numeric_anchor_failures():
+    """失败要落成清单：判了有支持，但引用里找不到要求中的数字。"""
+    results = [
+        result(
+            judged="supported",
+            cited=("c1",),
+            expected_evidence=("c1",),
+            requirement="项目 A 的压测吞吐为每秒约 300 次请求",
+        )
+    ]
+    summary = summarize(results, arm="dense", chunk_texts={"c1": "压测结果显示每秒约 1200 次请求"})
+
+    text = render_markdown(summary, judge_version="qwen-plus")
+
+    assert "数字核对失败" in text
+    assert "缺 300" in text
 
 
 @pytest.mark.parametrize(
