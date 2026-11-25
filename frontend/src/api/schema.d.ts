@@ -918,7 +918,14 @@ export interface components {
             /** Missing Information */
             missing_information: string[];
         };
-        /** PdfLocator */
+        /**
+         * PdfLocator
+         * @description PDF 定位：页码是权威，字符区间是可选精化。
+         *
+         *     ``char_start``/``char_end`` 相对**该页**提取文本（LF 归一化），0 起始、半开区间，
+         *     语义见 dev/19。刻意用页内偏移而不是全文偏移：全文偏移要跨越空白页记账，解析器一改
+         *     （例如 OCR 版本）就整体漂移。缺省时消费方只按页码定位，不允许按比例换算。
+         */
         PdfLocator: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -927,6 +934,10 @@ export interface components {
             kind: "pdf";
             /** Page */
             page: number;
+            /** Char Start */
+            char_start?: number | null;
+            /** Char End */
+            char_end?: number | null;
         };
         /** PendingInput */
         PendingInput: {
