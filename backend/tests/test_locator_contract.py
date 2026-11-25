@@ -10,9 +10,11 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from app.rag.chunking import chunk_document, parse_document
+from app.rag.chunking import char_span, chunk_document, parse_document
 from app.rag.structured_chunking import ChunkPolicy, split_structured
+from app.schemas.analysis import TextLocator
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "examples"
@@ -24,10 +26,9 @@ def parsed(name: str):
     return parse_document((EXAMPLES / name).read_bytes())
 
 
-def char_span(lines: list[str], start: int, end: int) -> tuple[int, int]:
+def char_span_of(lines: list[str], start: int, end: int) -> tuple[int, int]:
     """把 1 起始的行区间换算成归一化全文的 ``[char_start, char_end)``。"""
-    begin = 0 if start == 1 else len("\n".join(lines[: start - 1])) + 1
-    return begin, begin + len("\n".join(lines[start - 1 : end]))
+    return char_span(lines, line_start=start, line_end=end)
 
 
 @pytest.mark.parametrize("name", FIXTURES)
@@ -44,7 +45,7 @@ def test_text_quote_equals_its_line_range_and_char_span(name, max_chars):
         lines = document.lines[chunk.locator.line_start - 1 : chunk.locator.line_end]
         assert chunk.text == "\n".join(lines)
 
-        begin, end = char_span(document.lines, chunk.locator.line_start, chunk.locator.line_end)
+        begin, end = char_span_of(document.lines, chunk.locator.line_start, chunk.locator.line_end)
         assert document.text[begin:end] == chunk.text
 
 
@@ -137,3 +138,43 @@ def test_structured_chunk_split_inside_a_line_cannot_reuse_line_numbers():
     for chunk in chunks:
         # 行号表达不了，但字符 span 永远精确：这就是必须补契约的理由。
         assert chunk.text == text[chunk.char_start : chunk.char_end]
+
+
+def test_char_span_equals_the_line_range_join_for_every_pair():
+    """契约七：``char_span()`` 的换算覆盖所有行区间，越界直接报错不夹取。"""
+    lines = ["# 标题", "", "正文第一行", "正文第二行"]
+    text = "\n".join(lines)
+
+    for start in range(1, len(lines) + 1):
+        for end in range(start, len(lines) + 1):
+            begin, stop = char_span(lines, line_start=start, line_end=end)
+            assert text[begin:stop] == "\n".join(lines[start - 1 : end])
+
+    with pytest.raises(ValueError, match="超出文本范围"):
+        char_span(lines, line_start=0, line_end=1)
+    with pytest.raises(ValueError, match="超出文本范围"):
+        char_span(lines, line_start=2, line_end=len(lines) + 1)
+
+
+def test_text_locator_accepts_absent_or_complete_span_only():
+    """契约八：字符区间要么整对出现，要么都不出现；半个区间与空区间都拒绝。
+
+    历史数据只有行号，必须继续通过校验；新数据即使带 span 也只多不少字段，
+    所以这条放宽是向后兼容的关键。
+    """
+    legacy = TextLocator.model_validate({"kind": "text", "line_start": 10, "line_end": 18})
+    assert (legacy.char_start, legacy.char_end) == (None, None)
+
+    full = TextLocator.model_validate(
+        {"kind": "text", "line_start": 10, "line_end": 18, "char_start": 240, "char_end": 331}
+    )
+    assert (full.char_start, full.char_end) == (240, 331)
+
+    with pytest.raises(ValidationError, match="must be provided together"):
+        TextLocator.model_validate(
+            {"kind": "text", "line_start": 1, "line_end": 1, "char_start": 0}
+        )
+    with pytest.raises(ValidationError, match="must be greater than char_start"):
+        TextLocator.model_validate(
+            {"kind": "text", "line_start": 1, "line_end": 1, "char_start": 7, "char_end": 7}
+        )

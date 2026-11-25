@@ -15,14 +15,27 @@ class EvidenceRef(DocumentVersion):
 
 
 class TextLocator(ContractModel):
+    """文本定位：行号是权威，字符区间是可选精化。
+
+    ``char_start``/``char_end`` 相对解析后的归一化全文（LF 换行），0 起始、半开区间，
+    语义见 dev/19。M2 的 chunk 等于整行区间，因此这两个字段可以省略；一旦出现就必须
+    同时出现，并且能精确切出 quote。缺省时消费方退回行号，不允许按比例换算。
+    """
+
     kind: Literal["text"]
     line_start: int = Field(ge=1)
     line_end: int = Field(ge=1)
+    char_start: int | None = Field(default=None, ge=0)
+    char_end: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_lines(self):
         if self.line_end < self.line_start:
             raise ValueError("line_end must be >= line_start")
+        if (self.char_start is None) != (self.char_end is None):
+            raise ValueError("char_start and char_end must be provided together")
+        if self.char_start is not None and self.char_end <= self.char_start:
+            raise ValueError("char_end must be greater than char_start")
         return self
 
 

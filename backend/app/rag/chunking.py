@@ -220,6 +220,20 @@ def chunking_config_version(max_chars: int) -> str:
     return f"block-pack-v1::{max_chars}"
 
 
+def char_span(lines: list[str], *, line_start: int, line_end: int) -> tuple[int, int]:
+    """把 1 起始的行区间换算成 ``"\\n".join(lines)`` 上的 ``[char_start, char_end)``。
+
+    切分器保证 chunk 等于连续整行区间，所以这个换算总是成立；它同时是 span 契约的
+    语义基准（dev/19）——引用位置的字符区间必须能精确切出 quote。行区间越界时显式
+    报错，不做夹取。
+    """
+    if not 1 <= line_start <= line_end <= len(lines):
+        raise ValueError("行区间超出文本范围")
+    prefix = "" if line_start == 1 else "\n".join(lines[: line_start - 1]) + "\n"
+    begin = len(prefix)
+    return begin, begin + len("\n".join(lines[line_start - 1 : line_end]))
+
+
 def chunk_document(lines: list[str], *, max_chars: int) -> list[DocumentChunk]:
     """把行序列装包成连续行区间 chunk（标题不与其小节分离，段落不从中切开）。"""
     blocks = _blocks(lines)
@@ -310,6 +324,7 @@ __all__ = [
     "DocumentParseError",
     "ParsedDocument",
     "PARSER_VERSION",
+    "char_span",
     "chunk_document",
     "chunking_config_version",
     "parse_document",
