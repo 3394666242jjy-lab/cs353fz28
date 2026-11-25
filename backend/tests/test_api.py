@@ -303,6 +303,7 @@ def test_evidence_returns_quote_locator_and_source(client, monkeypatch):
 
 
 def test_evidence_maps_text_locator_lines(client, monkeypatch):
+    """历史 chunk 没有字符区间时，locator 如实回 null，不凭空补偏移。"""
     _auth_as_user_one(client)
     monkeypatch.setattr(
         "app.api.routes.chunks_get",
@@ -331,7 +332,45 @@ def test_evidence_maps_text_locator_lines(client, monkeypatch):
         "kind": "text",
         "line_start": 10,
         "line_end": 18,
+        "char_start": None,
+        "char_end": None,
     }
+
+
+def test_evidence_passes_through_char_span_when_present(client, monkeypatch):
+    """新索引带字符区间时，证据接口原样透出，供前端精确高亮（dev/19）。"""
+    _auth_as_user_one(client)
+    monkeypatch.setattr(
+        "app.api.routes.chunks_get",
+        lambda settings, user_id, chunk_id, version: {
+            "id": chunk_id,
+            "document_id": "doc_x",
+            "version": version,
+            "corpus": "personal",
+            "text": "some lines",
+            "locator": {
+                "kind": "text",
+                "line_start": 10,
+                "line_end": 18,
+                "char_start": 240,
+                "char_end": 331,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "app.api.routes.documents_get",
+        lambda settings, user_id, document_id: DocumentResult(
+            id=document_id,
+            kind="project",
+            filename="project.md",
+            current_version=1,
+            status="ready",
+        ),
+    )
+    response = client.get("/api/v1/evidence/chunk_t?version=1")
+    assert response.status_code == 200
+    locator = response.json()["data"]["locator"]
+    assert (locator["char_start"], locator["char_end"]) == (240, 331)
 
 
 @pytest.mark.parametrize(

@@ -17,6 +17,7 @@ from app.rag.bm25 import Bm25Encoder
 from app.rag.chunking import (
     PARSER_VERSION,
     PDF_PARSER_VERSION,
+    char_span,
     chunk_document,
     chunking_config_version,
     parse_document,
@@ -110,10 +111,28 @@ async def index_document(
 
     parsed = parse_document(raw, file_type=file_type)
     if parsed.pages is None:
-        chunks = [
-            (chunk.text, chunk.locator)
-            for chunk in chunk_document(parsed.lines, max_chars=settings.chunk_max_chars)
-        ]
+        chunks = []
+        for chunk in chunk_document(parsed.lines, max_chars=settings.chunk_max_chars):
+            start, end = char_span(
+                parsed.lines,
+                line_start=chunk.locator.line_start,
+                line_end=chunk.locator.line_end,
+            )
+            # 自检：span 必须能精确还原 quote。宁可直接失败，也不写入一个错的区间。
+            if parsed.text[start:end] != chunk.text:
+                raise ValueError("字符区间与 chunk 原文不一致，拒绝写入错误定位")
+            chunks.append(
+                (
+                    chunk.text,
+                    TextLocator(
+                        kind="text",
+                        line_start=chunk.locator.line_start,
+                        line_end=chunk.locator.line_end,
+                        char_start=start,
+                        char_end=end,
+                    ),
+                )
+            )
         parser_version = PARSER_VERSION
     else:
         chunks = [

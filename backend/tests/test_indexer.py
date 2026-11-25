@@ -155,6 +155,28 @@ def test_project_demo_end_to_end_index_build():
     )
 
 
+def test_text_chunks_are_indexed_with_exact_char_spans():
+    """文本入库时写入字符区间，且每个区间能精确切出该 chunk 的原文（dev/19）。
+
+    行号是权威定位，字符区间是可选精化；入库时自检 quote，宁可直接失败也不写入
+    一个偏移错位的定位。
+    """
+    handler = RoutingHandler()
+    embedder, store, config = pipeline(handler)
+    source = PROJECT_BYTES.decode("utf-8")
+    lines = source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    text = "\n".join(lines)
+
+    report = run_index(handler, embedder=embedder, store=store, config=config)
+
+    for chunk in report.chunks:
+        locator = chunk.locator
+        assert locator.char_start is not None and locator.char_end is not None
+        assert text[locator.char_start : locator.char_end] == chunk.text
+
+
 def test_sparse_vectors_are_written_only_when_encoder_is_provided():
     """提供 BM25 编码器时写入关键词稀疏向量；不提供时保持 M1 的纯稠密写入。"""
     handler = RoutingHandler()
