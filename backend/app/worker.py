@@ -72,7 +72,10 @@ def _public_index_error(error: Exception) -> str:
         allowed = {
             "暂不支持加密 PDF，请上传可直接读取的文件",
             "PDF 文件损坏或无法解析",
-            "PDF 没有可提取的文本层；扫描件暂不支持",
+            (
+                "PDF 未能提取到任何文字（文本层为空且图片 OCR 无结果）；"
+                "请确认不是空白或纯装饰图形文档"
+            ),
             "文档不是有效的 UTF-8 文本",
         }
         if message in allowed:
