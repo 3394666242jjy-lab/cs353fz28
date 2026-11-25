@@ -10,11 +10,11 @@
 | 错误支持率 ↓ (`false_support_rate`) | 0.0000 |
 | 过度保守率 ↓ (`over_refusal_rate`) | 0.0000 |
 | 引用失效证据率 ↓ (`stale_citation_rate`) | 0.0000 |
-| 引用正确率 ↑ (`citation_precision`) | 0.3636 |
-| 引用召回 ↑ (`citation_recall`) | 0.6667 |
+| 引用正确率 ↑ (`citation_precision`) | 0.2143 |
+| 引用召回 ↑ (`citation_recall`) | 0.5000 |
 
 上下文体积：平均 4073 字 / 最多 4149 字 / 平均 10.8 块；超预算被跳过的题 0 条
-成本：输入 39856 tokens，输出 1027 tokens；耗时 P50 2644 ms / P95 4597 ms
+成本：输入 39856 tokens，输出 1185 tokens；耗时 P50 2803 ms / P95 4808 ms
 
 | 期望 \ 判定 | supported | partial | not_evidenced |
 | --- | --- | --- | --- |

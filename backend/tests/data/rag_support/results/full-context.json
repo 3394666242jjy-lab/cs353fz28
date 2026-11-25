@@ -37,8 +37,8 @@
   "false_support_rate": 0.0,
   "over_refusal_rate": 0.0,
   "stale_citation_rate": 0.0,
-  "citation_precision": 0.36363636363636365,
-  "citation_recall": 0.6666666666666666,
+  "citation_precision": 0.21428571428571427,
+  "citation_recall": 0.5,
   "confusion": {
     "supported": {
       "supported": 3,
@@ -65,11 +65,11 @@
   },
   "cost": {
     "input_tokens": 39856,
-    "output_tokens": 1027
+    "output_tokens": 1185
   },
   "latency_ms": {
     "count": 12,
-    "p50": 2644.1,
-    "p95": 4596.9
+    "p50": 2803.2,
+    "p95": 4807.7
   }
 }

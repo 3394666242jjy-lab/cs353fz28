@@ -1,0 +1,75 @@
+{
+  "arm": "dense",
+  "metric_version": "support-eval-v1",
+  "counts": {
+    "total": 12,
+    "decided": 12,
+    "undecided": 0,
+    "by_axis": {
+      "fully_supported": {
+        "count": 3,
+        "decided": 3,
+        "false_support": 0
+      },
+      "partially_supported": {
+        "count": 3,
+        "decided": 3,
+        "false_support": 0
+      },
+      "no_evidence": {
+        "count": 3,
+        "decided": 3,
+        "false_support": 0
+      },
+      "old_version": {
+        "count": 2,
+        "decided": 2,
+        "false_support": 0
+      },
+      "deleted": {
+        "count": 1,
+        "decided": 1,
+        "false_support": 0
+      }
+    }
+  },
+  "status_accuracy": 1.0,
+  "false_support_rate": 0.0,
+  "over_refusal_rate": 0.0,
+  "stale_citation_rate": 0.0,
+  "citation_precision": 0.38461538461538464,
+  "citation_recall": 0.8333333333333334,
+  "confusion": {
+    "supported": {
+      "supported": 3,
+      "partial": 0,
+      "not_evidenced": 0
+    },
+    "partial": {
+      "supported": 0,
+      "partial": 3,
+      "not_evidenced": 0
+    },
+    "not_evidenced": {
+      "supported": 0,
+      "partial": 0,
+      "not_evidenced": 6
+    }
+  },
+  "context": {
+    "mean_chars": 2071.2,
+    "max_chars": 2427,
+    "p95_chars": 2157.0,
+    "mean_blocks": 5.0,
+    "truncated_items": 0
+  },
+  "cost": {
+    "input_tokens": 23597,
+    "output_tokens": 1140
+  },
+  "latency_ms": {
+    "count": 12,
+    "p50": 4805.4,
+    "p95": 6578.5
+  }
+}
