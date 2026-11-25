@@ -181,6 +181,12 @@ class NullJudge:
         raise RuntimeError("judge 未启用：请使用 --judge provider 或只统计上下文体积")
 
 
+class RecordedJudge:
+    """重算模式的占位：报告必须写明"判定沿用已有结果、本次没有调用模型"。"""
+
+    model_version = "沿用已有判定（本次未调用模型）"
+
+
 class ProviderJudge:
     """真实判定：复用生产的 chat-completions 适配器与结构化输出约束。"""
 
@@ -337,6 +343,7 @@ def write_result(path: Path, result) -> None:
         "store_ms": result.store_ms,
         "judge_ms": result.judge_ms,
         "retrieval_config_version": result.retrieval_config_version,
+        "requirement": result.requirement,
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,
     }
@@ -416,6 +423,7 @@ def run_arm(
             store_ms=timing["store_ms"],
             judge_ms=judge_ms,
             retrieval_config_version=timing.get("config_version", ""),
+            requirement=item.requirement,
         )
         results.append(result)
         write_result(path, result)
@@ -433,10 +441,18 @@ def _judge_sync(judge, *, requirement: str, context: str):
     return asyncio.run(judge.judge(requirement=requirement, context=context))
 
 
-def write_report(arm: str, results, *, judge, extra_notes: Sequence[str] = ()) -> dict:
+def write_report(
+    arm: str,
+    results,
+    *,
+    judge,
+    chunk_texts: dict[str, str] | None = None,
+    extra_notes: Sequence[str] = (),
+) -> dict:
     """把单臂汇总写成 JSON + Markdown；未判定与样本分辨率都要出现在报告里。"""
     support_eval = backend().support_eval
-    summary = support_eval.summarize(results, arm=arm)
+    # chunk_texts 用于数字锚点核对：没有原文时该指标标为未判定，而不是当作通过。
+    summary = support_eval.summarize(results, arm=arm, chunk_texts=chunk_texts)
     notes = list(extra_notes)
     if summary["counts"]["undecided"]:
         notes.append(
@@ -459,12 +475,60 @@ def write_report(arm: str, results, *, judge, extra_notes: Sequence[str] = ()) -
     return summary
 
 
-def write_comparison(summaries, *, notes: Sequence[str] = ()) -> None:
+def write_comparison(
+    summaries,
+    *,
+    notes: Sequence[str] = (),
+) -> None:
     support_eval = backend().support_eval
     report = support_eval.render_comparison(summaries, notes=notes)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     (RESULTS_DIR / "comparison.md").write_text(report + "\n", encoding="utf-8", newline="\n")
     print("\n" + report)
+
+
+def load_arm_results(arm: str, items, index) -> list:
+    """把已有的逐题 JSONL 读回成结果对象，供 --summarize-only 重算指标。
+
+    不重新调用模型：判定沿用当时的结果，避免"改口径就得多花一次钱"，也避免同一份
+    产物被无意中换成另一次采样的结果。
+    """
+    support_eval = backend().support_eval
+    path = RESULTS_DIR / f"{arm}.jsonl"
+    if not path.exists():
+        raise SystemExit(f"没有 {arm} 的历史结果：{path}；请先跑一次 --arm {arm}")
+    by_id = {item.id: item for item in items}
+    results = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        item = by_id[row["item_id"]]
+        expected, forbidden = resolve_item(item, index)
+        results.append(
+            support_eval.SupportResult(
+                item_id=row["item_id"],
+                axis=row["axis"],
+                expected_status=row["expected_status"],
+                judged_status=row["judged_status"],
+                cited=tuple(row["cited"]),
+                expected_evidence=expected,
+                forbidden=forbidden,
+                context_chars=row["context_chars"],
+                context_blocks=row["context_blocks"],
+                dropped_blocks=row["dropped_blocks"],
+                total_ms=row["total_ms"],
+                input_tokens=row["input_tokens"],
+                output_tokens=row["output_tokens"],
+                retrieval_ms=row.get("retrieval_ms", 0.0),
+                embedding_ms=row.get("embedding_ms", 0.0),
+                store_ms=row.get("store_ms", 0.0),
+                judge_ms=row.get("judge_ms", 0.0),
+                retrieval_config_version=row.get("retrieval_config_version", ""),
+                requirement=row.get("requirement") or item.requirement,
+            )
+        )
+    return results
 
 
 def main() -> None:
@@ -493,14 +557,32 @@ def main() -> None:
     parser.add_argument("--top-k", type=int, default=None, help="覆盖检索臂的 top_k")
     parser.add_argument("--rebuild", action="store_true", help="重建评测集合并重新索引（检索臂）")
     parser.add_argument("--no-proxy", action="store_true", help="绕过系统代理直连外部服务")
+    parser.add_argument(
+        "--summarize-only",
+        action="store_true",
+        help="不调用任何外部服务，用已有 JSONL 重算指标与报告（口径变更时用）",
+    )
     args = parser.parse_args()
 
     settings = backend().m2.eval_settings(no_proxy=args.no_proxy)
     index = corpus_index(settings)
     items = load_items()
+    chunk_texts = {chunk_id: text for scope in index.values() for chunk_id, text in scope.items()}
 
     if args.check:
         check(items, index)
+        return
+
+    if args.summarize_only:
+        arms = args.compare or [args.arm]
+        summaries = []
+        for arm in arms:
+            results = load_arm_results(arm, items, index)
+            summary = write_report(arm, results, judge=RecordedJudge(), chunk_texts=chunk_texts)
+            summaries.append(summary)
+            print(f"重算 {arm}：{summary['counts']['decided']} 条已判定")
+        if len(summaries) > 1:
+            write_comparison(summaries)
         return
 
     judge = build_judge(args.judge)
