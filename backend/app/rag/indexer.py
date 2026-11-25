@@ -17,12 +17,12 @@ from app.rag.bm25 import Bm25Encoder
 from app.rag.chunking import (
     PARSER_VERSION,
     PDF_PARSER_VERSION,
-    char_span,
     chunk_document,
     chunking_config_version,
     parse_document,
 )
 from app.rag.embeddings import EmbeddingProvider, get_embedding_provider
+from app.rag.locators import pdf_locator, text_locator
 from app.rag.vector_store import (
     DENSE_VECTOR_NAME,
     ChunkPoint,
@@ -111,35 +111,36 @@ async def index_document(
 
     parsed = parse_document(raw, file_type=file_type)
     if parsed.pages is None:
-        chunks = []
-        for chunk in chunk_document(parsed.lines, max_chars=settings.chunk_max_chars):
-            start, end = char_span(
-                parsed.lines,
-                line_start=chunk.locator.line_start,
-                line_end=chunk.locator.line_end,
+        chunks = [
+            (
+                chunk.text,
+                text_locator(
+                    text=parsed.text,
+                    lines=parsed.lines,
+                    line_start=chunk.locator.line_start,
+                    line_end=chunk.locator.line_end,
+                    quote=chunk.text,
+                ),
             )
-            # 自检：span 必须能精确还原 quote。宁可直接失败，也不写入一个错的区间。
-            if parsed.text[start:end] != chunk.text:
-                raise ValueError("字符区间与 chunk 原文不一致，拒绝写入错误定位")
-            chunks.append(
-                (
-                    chunk.text,
-                    TextLocator(
-                        kind="text",
-                        line_start=chunk.locator.line_start,
-                        line_end=chunk.locator.line_end,
-                        char_start=start,
-                        char_end=end,
-                    ),
-                )
-            )
+            for chunk in chunk_document(parsed.lines, max_chars=settings.chunk_max_chars)
+        ]
         parser_version = PARSER_VERSION
     else:
-        chunks = [
-            (chunk.text, PdfLocator(kind="pdf", page=page))
-            for page, lines in enumerate(parsed.pages, start=1)
-            for chunk in chunk_document(lines, max_chars=settings.chunk_max_chars)
-        ]
+        chunks = []
+        for page_number, page_lines in enumerate(parsed.pages, start=1):
+            for chunk in chunk_document(page_lines, max_chars=settings.chunk_max_chars):
+                chunks.append(
+                    (
+                        chunk.text,
+                        pdf_locator(
+                            page=page_number,
+                            page_lines=page_lines,
+                            line_start=chunk.locator.line_start,
+                            line_end=chunk.locator.line_end,
+                            quote=chunk.text,
+                        ),
+                    )
+                )
         parser_version = PDF_PARSER_VERSION
     if not chunks:
         raise ValueError("文档没有可索引的文本")

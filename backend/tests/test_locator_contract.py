@@ -13,8 +13,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.rag.chunking import char_span, chunk_document, parse_document
+from app.rag.locators import pdf_locator, structured_locator, text_locator
 from app.rag.structured_chunking import ChunkPolicy, split_structured
-from app.schemas.analysis import TextLocator
+from app.schemas.analysis import PdfLocator, TextLocator
 
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "examples"
@@ -178,3 +179,93 @@ def test_text_locator_accepts_absent_or_complete_span_only():
         TextLocator.model_validate(
             {"kind": "text", "line_start": 1, "line_end": 1, "char_start": 7, "char_end": 7}
         )
+
+
+def test_pdf_locator_uses_page_relative_offsets():
+    """契约九：PDF 的字符区间相对**该页**文本，不累加前面页面。
+
+    页内偏移是刻意的：全文偏移要跨越空白页记账，解析器一改（例如 OCR 版本）就整体
+    漂移；页内偏移只取决于这一页提取出来的文字。
+    """
+    page_two = ["Credential ID AWS-2024-8841.", "Valid through 2027-06."]
+    quote = "Valid through 2027-06."
+
+    locator = pdf_locator(page=2, page_lines=page_two, line_start=2, line_end=2, quote=quote)
+
+    # 第一行 28 字符 + 换行 = 29，第二行从 29 起；quote 长 22。
+    assert (locator.page, locator.char_start, locator.char_end) == (2, 29, 51)
+    assert "\n".join(page_two)[locator.char_start : locator.char_end] == quote
+
+
+def test_pdf_locator_rejects_a_span_that_does_not_cut_the_quote():
+    """契约十：定位自检不通过就抛错，绝不写入"看起来对"的偏移。"""
+    page_lines = ["第一行", "第二行"]
+
+    with pytest.raises(ValueError, match="字符区间与 quote 不一致"):
+        pdf_locator(page=1, page_lines=page_lines, line_start=1, line_end=1, quote="第二行")
+
+
+def test_text_locator_builder_verifies_quote_against_full_text():
+    """文本 locator 的字符区间相对全文，并同样自检 quote。"""
+    lines = ["# 标题", "", "正文第一行", "正文第二行"]
+    text = "\n".join(lines)
+
+    locator = text_locator(
+        text=text, lines=lines, line_start=3, line_end=4, quote="正文第一行\n正文第二行"
+    )
+
+    assert text[locator.char_start : locator.char_end] == "正文第一行\n正文第二行"
+    with pytest.raises(ValueError, match="字符区间与 quote 不一致"):
+        text_locator(text=text, lines=lines, line_start=3, line_end=3, quote="正文第二行")
+
+
+def test_pdf_locator_keeps_span_optional_and_paired():
+    """历史 PDF 证据只有页码，仍然合法；半对区间拒绝。"""
+    legacy = PdfLocator.model_validate({"kind": "pdf", "page": 3})
+    assert (legacy.char_start, legacy.char_end) == (None, None)
+
+    with pytest.raises(ValidationError, match="must be provided together"):
+        PdfLocator.model_validate({"kind": "pdf", "page": 3, "char_end": 10})
+    with pytest.raises(ValidationError, match="must be greater than char_start"):
+        PdfLocator.model_validate({"kind": "pdf", "page": 3, "char_start": 10, "char_end": 10})
+
+
+def test_structured_locator_carries_span_for_mid_line_splits():
+    """契约十一：M3 结构化片段转成 locator 时必须带 span，并且能被原文校验。
+
+    长段落按字符拆开时行号表达不了位置，span 才是权威；``embedding_text`` 拼了标题
+    路径，绝不能拿来当 quote。
+    """
+    paragraph = "这是一段很长的正文，需要按字符拆开而不能按行拆。" * 20
+    text = f"# 标题\n\n{paragraph}\n"
+    chunks = split_structured(
+        text, source_id="s", source_version="1", policy=ChunkPolicy(target_chars=300)
+    )
+
+    locator = structured_locator(chunks[0], source_text=text)
+
+    assert text[locator.char_start : locator.char_end] == chunks[0].text
+    assert (locator.line_start, locator.line_end) == (chunks[0].line_start, chunks[0].line_end)
+    assert chunks[0].embedding_text != chunks[0].text
+
+
+def test_structured_locator_rejects_a_chunk_that_does_not_match_its_source():
+    """切分器给出的区间与原文不符时直接失败，不写入错位定位。"""
+    text = "# 标题\n\n正文\n"
+    chunks = split_structured(text, source_id="s", source_version="1")
+
+    with pytest.raises(ValueError, match="字符区间与 quote 不一致"):
+        structured_locator(chunks[0], source_text="完全不同的原文")
+
+
+def test_structured_locator_works_without_source_text_but_keeps_the_span():
+    """调用方没有原文时无法自检，但仍必须带上切分器给出的区间。"""
+    text = "# 标题\n\n正文第一段\n"
+    chunks = split_structured(text, source_id="s", source_version="1")
+
+    locator = structured_locator(chunks[0])
+
+    assert (locator.char_start, locator.char_end) == (
+        chunks[0].char_start,
+        chunks[0].char_end,
+    )

@@ -297,7 +297,7 @@ def test_evidence_returns_quote_locator_and_source(client, monkeypatch):
         "version": 2,
         "filename": "resume.pdf",
         "source_type": "personal",
-        "locator": {"kind": "pdf", "page": 3},
+        "locator": {"kind": "pdf", "page": 3, "char_start": None, "char_end": None},
         "quote": "led a five-person team",
     }
 
