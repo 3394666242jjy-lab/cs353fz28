@@ -33,12 +33,15 @@
       }
     }
   },
+  "config_versions": [
+    "hybrid_rerank/gte-rerank-v2/w0.30/text-embedding-v4@1024/top5"
+  ],
   "status_accuracy": 0.9166666666666666,
   "false_support_rate": 0.0,
   "over_refusal_rate": 0.0,
   "stale_citation_rate": 0.0,
-  "citation_precision": 0.3333333333333333,
-  "citation_recall": 0.8333333333333334,
+  "citation_precision": 0.35294117647058826,
+  "citation_recall": 1.0,
   "confusion": {
     "supported": {
       "supported": 3,
@@ -57,19 +60,25 @@
     }
   },
   "context": {
-    "mean_chars": 2071.2,
-    "max_chars": 2427,
-    "p95_chars": 2157.0,
+    "mean_chars": 2213.3,
+    "max_chars": 2508,
+    "p95_chars": 2478.0,
     "mean_blocks": 5.0,
     "truncated_items": 0
   },
   "cost": {
-    "input_tokens": 23597,
-    "output_tokens": 1220
+    "input_tokens": 24652,
+    "output_tokens": 1334
   },
   "latency_ms": {
     "count": 12,
-    "p50": 4930.9,
-    "p95": 6913.0
+    "p50": 7473.7,
+    "p95": 8822.5,
+    "mean_embedding": 451.8,
+    "mean_store": 3316.1,
+    "mean_rerank": 463.8,
+    "mean_judge": 3135.9,
+    "retrieval_p50": 4234.7,
+    "retrieval_p95": 4339.0
   }
 }

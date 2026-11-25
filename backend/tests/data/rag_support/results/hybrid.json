@@ -33,12 +33,15 @@
       }
     }
   },
-  "status_accuracy": 1.0,
+  "config_versions": [
+    "hybrid/w0.30/text-embedding-v4@1024/top5"
+  ],
+  "status_accuracy": 0.9166666666666666,
   "false_support_rate": 0.0,
   "over_refusal_rate": 0.0,
   "stale_citation_rate": 0.0,
-  "citation_precision": 0.35714285714285715,
-  "citation_recall": 0.8333333333333334,
+  "citation_precision": 0.4,
+  "citation_recall": 1.0,
   "confusion": {
     "supported": {
       "supported": 3,
@@ -52,24 +55,30 @@
     },
     "not_evidenced": {
       "supported": 0,
-      "partial": 0,
-      "not_evidenced": 6
+      "partial": 1,
+      "not_evidenced": 5
     }
   },
   "context": {
-    "mean_chars": 2071.2,
-    "max_chars": 2427,
-    "p95_chars": 2157.0,
+    "mean_chars": 2096.4,
+    "max_chars": 2527,
+    "p95_chars": 2403.0,
     "mean_blocks": 5.0,
     "truncated_items": 0
   },
   "cost": {
-    "input_tokens": 23597,
-    "output_tokens": 1209
+    "input_tokens": 23834,
+    "output_tokens": 1257
   },
   "latency_ms": {
     "count": 12,
-    "p50": 5054.9,
-    "p95": 6060.9
+    "p50": 7116.0,
+    "p95": 7950.6,
+    "mean_embedding": 497.6,
+    "mean_store": 3282.6,
+    "mean_rerank": 0.2,
+    "mean_judge": 2986.4,
+    "retrieval_p50": 3697.3,
+    "retrieval_p95": 4089.4
   }
 }

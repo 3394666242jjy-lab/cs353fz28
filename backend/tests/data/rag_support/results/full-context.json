@@ -24,7 +24,7 @@
       "old_version": {
         "count": 2,
         "decided": 2,
-        "false_support": 0
+        "false_support": 1
       },
       "deleted": {
         "count": 1,
@@ -33,12 +33,13 @@
       }
     }
   },
+  "config_versions": [],
   "status_accuracy": 0.9166666666666666,
-  "false_support_rate": 0.0,
+  "false_support_rate": 0.1111111111111111,
   "over_refusal_rate": 0.0,
   "stale_citation_rate": 0.0,
-  "citation_precision": 0.21428571428571427,
-  "citation_recall": 0.5,
+  "citation_precision": 0.3076923076923077,
+  "citation_recall": 0.6666666666666666,
   "confusion": {
     "supported": {
       "supported": 3,
@@ -51,8 +52,8 @@
       "not_evidenced": 0
     },
     "not_evidenced": {
-      "supported": 0,
-      "partial": 1,
+      "supported": 1,
+      "partial": 0,
       "not_evidenced": 5
     }
   },
@@ -65,11 +66,17 @@
   },
   "cost": {
     "input_tokens": 39856,
-    "output_tokens": 1185
+    "output_tokens": 1042
   },
   "latency_ms": {
     "count": 12,
-    "p50": 2803.2,
-    "p95": 4807.7
+    "p50": 2643.8,
+    "p95": 3913.0,
+    "mean_embedding": 0.0,
+    "mean_store": 0.0,
+    "mean_rerank": 0.0,
+    "mean_judge": 2550.2,
+    "retrieval_p50": 0.0,
+    "retrieval_p95": 0.0
   }
 }

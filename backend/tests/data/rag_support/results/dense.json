@@ -33,12 +33,15 @@
       }
     }
   },
+  "config_versions": [
+    "dense/text-embedding-v4@1024/top5"
+  ],
   "status_accuracy": 1.0,
   "false_support_rate": 0.0,
   "over_refusal_rate": 0.0,
   "stale_citation_rate": 0.0,
-  "citation_precision": 0.38461538461538464,
-  "citation_recall": 0.8333333333333334,
+  "citation_precision": 0.4,
+  "citation_recall": 1.0,
   "confusion": {
     "supported": {
       "supported": 3,
@@ -65,11 +68,17 @@
   },
   "cost": {
     "input_tokens": 23597,
-    "output_tokens": 1140
+    "output_tokens": 1276
   },
   "latency_ms": {
     "count": 12,
-    "p50": 4805.4,
-    "p95": 6578.5
+    "p50": 5568.7,
+    "p95": 6508.7,
+    "mean_embedding": 522.1,
+    "mean_store": 1853.6,
+    "mean_rerank": 0.1,
+    "mean_judge": 2942.5,
+    "retrieval_p50": 2336.5,
+    "retrieval_p95": 2462.0
   }
 }

@@ -2,6 +2,7 @@
 
 - 指标口径：`support-eval-v1`；判定模型：`qwen-plus`
 - 题目 12 条，已判定 12 条，未判定 0 条
+- 检索配置：`hybrid_rerank/gte-rerank-v2/w0.30/text-embedding-v4@1024/top5`
 - 可判定样本 12 条：1 条 = 0.0833，比率只有量级意义
 
 | 指标 | 值 |
@@ -10,11 +11,12 @@
 | 错误支持率 ↓ (`false_support_rate`) | 0.0000 |
 | 过度保守率 ↓ (`over_refusal_rate`) | 0.0000 |
 | 引用失效证据率 ↓ (`stale_citation_rate`) | 0.0000 |
-| 引用正确率 ↑ (`citation_precision`) | 0.3333 |
-| 引用召回 ↑ (`citation_recall`) | 0.8333 |
+| 引用正确率 ↑ (`citation_precision`) | 0.3529 |
+| 引用召回 ↑ (`citation_recall`) | 1.0000 |
 
-上下文体积：平均 2071 字 / 最多 2427 字 / 平均 5.0 块；超预算被跳过的题 0 条
-成本：输入 23597 tokens，输出 1220 tokens；耗时 P50 4931 ms / P95 6913 ms
+上下文体积：平均 2213 字 / 最多 2508 字 / 平均 5.0 块；超预算被跳过的题 0 条
+成本：输入 24652 tokens，输出 1334 tokens；总耗时 P50 7474 ms / P95 8822 ms
+分阶段耗时（均值，ms）：embedding 452 / 向量库 3316 / 重排等残差 464 / 判定 3136；检索段 P50 4235 / P95 4339
 
 | 期望 \ 判定 | supported | partial | not_evidenced |
 | --- | --- | --- | --- |
