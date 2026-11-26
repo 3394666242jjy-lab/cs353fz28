@@ -1,16 +1,30 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ApiError, api, hasAuthToken, setAuthToken, type UserResult } from './api/client';
 import { describeError } from './api/errors';
 import { sampleInputs, type AnalysisResult } from './api/fixtures';
 import JdVersionBar, { type JobNotice, type JobVersionInfo } from './components/JdVersionBar';
 import StatusBadge from './components/StatusBadge';
+import Icon from './components/Icon';
 import AnalysisPanel from './pages/AnalysisPanel';
 import DocumentManager from './pages/DocumentManager';
 import DocumentUpload from './pages/DocumentUpload';
 import JdImport from './pages/JdImport';
 import PlanPanel from './pages/PlanPanel';
+import KnowledgeLibrary from './pages/KnowledgeLibrary';
+import GlassHome from './pages/GlassHome';
+import WorkspaceLight from './components/WorkspaceLight';
+import WorkspaceNav from './components/WorkspaceNav';
+import EffectsToggle from './components/EffectsToggle';
 
-const steps = ['资料准备', '目标岗位', '匹配分析', '准备计划'];
+const steps = ['资料准备', '目标岗位', '匹配分析', '准备计划', '知识素材'];
+const stepIcons = ['documents', 'job', 'analysis', 'plan', 'knowledge'] as const;
+const pageCopy = [
+  ['准备，从这里开始', '整理经历、明确目标，让每一步准备都有依据。'],
+  ['目标岗位', '保存岗位要求，为匹配分析建立清晰的参照。'],
+  ['匹配分析', '对照岗位要求与原文证据，看见优势与待补充的信息。'],
+  ['准备计划', '把需要补充的能力，安排进可执行的每一天。'],
+  ['知识素材', '按方向阅读可靠来源，为下一次实践补充知识。'],
+];
 const JOB_KEY = 'careerpilot.job';
 const ANALYSIS_KEY = 'careerpilot.analysis';
 type Connection = 'checking' | 'connected' | 'disconnected';
@@ -87,7 +101,14 @@ function readSavedAnalysis(): AnalysisResult | null {
 }
 
 export default function App() {
-  const [step, setStep] = useState(0);
+  const mainRef = useRef<HTMLElement>(null);
+  const [home, setHome] = useState(
+    () => new URLSearchParams(window.location.search).get('view') !== 'workspace',
+  );
+  const [step, setStep] = useState(() => {
+    const value = Number(new URLSearchParams(window.location.search).get('step'));
+    return Number.isInteger(value) && value >= 0 && value < steps.length ? value : 0;
+  });
   const [connection, setConnection] = useState<Connection>('checking');
   const [dependencies, setDependencies] = useState<Record<string, string> | null>(null);
   const [probing, setProbing] = useState(false);
@@ -95,20 +116,94 @@ export default function App() {
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [analysisVisible, setAnalysisVisible] = useState(false);
   const [initialAnalysis] = useState(() => readSavedAnalysis());
-  const [hasRealAnalysis, setHasRealAnalysis] = useState(initialAnalysis !== null);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(initialAnalysis);
   const [analysisStale, setAnalysisStale] = useState(false);
   const [job, setJob] = useState<JobVersionInfo | null>(() => readSavedJob());
   const [jobBusy, setJobBusy] = useState(false);
   const [jobNotice, setJobNotice] = useState<JobNotice | null>(null);
   const [documentIds, setDocumentIds] = useState<string[]>([]);
-  const [title, setTitle] = useState(() => readPendingJob()?.title ?? '后端开发实习生');
-  const [jd, setJd] = useState(() => readPendingJob()?.jd ?? '');
+  const [documentRevision, setDocumentRevision] = useState(0);
+  const [title, setTitle] = useState(
+    () => readPendingJob()?.title ?? readSavedJob()?.title ?? '后端开发实习生',
+  );
+  const [jd, setJd] = useState(() => readPendingJob()?.jd ?? readSavedJob()?.raw_jd ?? '');
   const [user, setUser] = useState<UserResult | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [accountOpen, setAccountOpen] = useState(false);
+
+  useEffect(() => {
+    if (accountOpen) document.getElementById('account-panel')?.scrollIntoView({ block: 'nearest' });
+  }, [accountOpen]);
+
+  useEffect(() => {
+    const title = home ? 'CareerPilot · 专注准备，从容向前' : `CareerPilot · ${steps[step]}`;
+    document.title = title;
+  }, [home, step]);
+
+  useEffect(() => {
+    const previousRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = 'manual';
+    function restorePage() {
+      window.dispatchEvent(new Event('careerpilot-before-navigate'));
+      const query = new URLSearchParams(window.location.search);
+      setHome(query.get('view') !== 'workspace');
+      const value = Number(query.get('step'));
+      setStep(Number.isInteger(value) && value >= 0 && value < steps.length ? value : 0);
+    }
+    window.addEventListener('popstate', restorePage);
+    return () => {
+      window.removeEventListener('popstate', restorePage);
+      window.history.scrollRestoration = previousRestoration;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!home) document.getElementById('main-content')?.focus({ preventScroll: true });
+  }, [home]);
+
+  useEffect(() => {
+    const main = mainRef.current;
+    if (
+      !main ||
+      home ||
+      document.documentElement.dataset.effects === 'light' ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    )
+      return;
+    const animation = main.animate([{ opacity: 0.78 }, { opacity: 1 }], {
+      duration: 180,
+      easing: 'ease-out',
+    });
+    return () => animation.cancel();
+  }, [home, step]);
+
+  function navigateStep(nextStep: number) {
+    // Session-expiry listeners can outlive the render that installed them.
+    const route = new URLSearchParams(window.location.search);
+    if (route.get('view') === 'workspace' && Number(route.get('step')) === nextStep) return;
+    window.dispatchEvent(new Event('careerpilot-before-navigate'));
+    window.history.pushState(null, '', `/?view=workspace&step=${nextStep}`);
+    setStep(nextStep);
+    setHome(false);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  function goHome() {
+    window.dispatchEvent(new Event('careerpilot-before-navigate'));
+    setHome(true);
+    window.history.pushState(null, '', '/');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  function openWorkspace(nextStep: number) {
+    setStep(nextStep);
+    setHome(false);
+    window.history.pushState(null, '', `/?view=workspace&step=${nextStep}`);
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
 
   function clearSessionData() {
     sessionStorage.removeItem('careerpilot.pending_documents');
@@ -120,7 +215,6 @@ export default function App() {
     sessionStorage.removeItem('careerpilot.plan_draft');
     sessionStorage.removeItem('careerpilot.event_cursor');
     setDocumentIds([]);
-    setHasRealAnalysis(false);
     setAnalysis(null);
     setAnalysisStale(false);
     setAnalysisVisible(false);
@@ -138,6 +232,7 @@ export default function App() {
     }
     sessionStorage.setItem('careerpilot.owner', current.id);
     setUser(current);
+    setAccountOpen(false);
   }
 
   useEffect(() => {
@@ -146,7 +241,7 @@ export default function App() {
       setUser(null);
       clearSessionData();
       setAuthError('登录已过期，请重新登录。');
-      setStep(0);
+      navigateStep(0);
     }
     window.addEventListener('careerpilot:session-expired', expired);
     return () => window.removeEventListener('careerpilot:session-expired', expired);
@@ -201,7 +296,8 @@ export default function App() {
     setPassword('');
     setAuthError('');
     clearSessionData();
-    setStep(0);
+    navigateStep(0);
+    setAccountOpen(false);
   }
 
   useEffect(() => {
@@ -226,7 +322,6 @@ export default function App() {
     setJobNotice(null);
     setTitle('后端开发实习生');
     setJd(sampleInputs.jdText);
-    setStep(1);
   }
 
   function editJd(value: string) {
@@ -374,98 +469,134 @@ export default function App() {
       : connection === 'checking'
         ? '检查后端连接…'
         : '后端未连接';
+  function openSample() {
+    loadSample();
+    setAnalysisVisible(true);
+    openWorkspace(2);
+  }
+  if (home) {
+    return (
+      <GlassHome
+        onStart={() => openWorkspace(0)}
+        onSample={openSample}
+        onKnowledge={() => openWorkspace(4)}
+      />
+    );
+  }
   return (
-    <div className="app-shell">
+    <div className="app-shell glass-workspace">
+      <div className="workspace-ambient" aria-hidden="true">
+        <i />
+        <i />
+        <span />
+      </div>
+      <WorkspaceLight scene={step} />
       <a className="skip-link" href="#main-content">
         跳到主内容
       </a>
       <aside className="sidebar">
-        <div className="brand">
+        <button className="brand brand-home" onClick={goHome} aria-label="返回 CareerPilot 首页">
           <span className="brand-mark" aria-hidden="true">
-            C<span>.</span>
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M5 24 13 8l5 9 9-13M5 24h11l5-9"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </span>
           <div>
             <strong>CareerPilot</strong>
             <span>求职准备工作台</span>
           </div>
-        </div>
+        </button>
         <div className="workspace-label">
-          个人工作区 <span>LOCAL</span>
+          我的工作区 <span>个人</span>
         </div>
-        <nav aria-label="准备步骤" className="step-nav">
-          {steps.map((label, index) => (
-            <button
-              key={label}
-              className={step === index ? 'nav-item active' : 'nav-item'}
-              aria-current={step === index ? 'step' : undefined}
-              onClick={() => setStep(index)}
-            >
-              <span className="step-number">0{index + 1}</span>
-              <span>{label}</span>
-              {step === index && <span className="nav-indicator" aria-hidden="true" />}
-            </button>
-          ))}
-        </nav>
-        <div className="sidebar-note">
-          <p className="eyebrow">M2 / 资料与计划</p>
-          <p>先整理资料，再用证据理解岗位要求。</p>
-          <span>资料版本、岗位编辑与准备计划已在 M2 接入。</span>
-        </div>
+        <WorkspaceNav step={step} onSelect={navigateStep} />
         <div className="connection-block">
-          <StatusBadge
-            label={connectionLabel}
-            tone={connection === 'connected' ? 'success' : 'neutral'}
-          />
-          <p>支持资料管理、岗位分析和计划确认；真实分析需模型与开发依赖就绪。</p>
-          <a href={api.docsUrl} target="_blank" rel="noreferrer">
-            打开 API 文档 <span aria-hidden="true">↗</span>
-          </a>
-          <button
-            className="text-button probe-button"
-            onClick={() => void probe()}
-            disabled={probing}
-          >
-            {probing ? '正在检查…' : '检查开发依赖'}
-          </button>
-          <div aria-live="polite">
-            {dependencies && (
-              <ul className="dependency-list">
-                {Object.entries(dependencies).map(([name, status]) => (
-                  <li key={name}>
-                    <span>{name}</span>
-                    <span className={status === 'ok' ? 'healthy' : ''}>
-                      {status === 'ok' ? '已就绪' : '未就绪'}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {probeMessage && <p>{probeMessage}</p>}
-          </div>
+          <details className="service-details">
+            <summary>连接与开发工具</summary>
+            <StatusBadge
+              label={connectionLabel}
+              tone={connection === 'connected' ? 'success' : 'neutral'}
+            />
+            <a href={api.docsUrl} target="_blank" rel="noreferrer">
+              打开 API 文档 ↗
+            </a>
+            <button
+              className="text-button probe-button"
+              onClick={() => void probe()}
+              disabled={probing}
+            >
+              {probing ? '正在检查…' : '检查开发依赖'}
+            </button>
+            <div aria-live="polite">
+              {dependencies && (
+                <ul className="dependency-list">
+                  {Object.entries(dependencies).map(([name, status]) => (
+                    <li key={name}>
+                      <span>{name}</span>
+                      <span className={status === 'ok' ? 'healthy' : ''}>
+                        {status === 'ok' ? '已就绪' : '未就绪'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {probeMessage && <p>{probeMessage}</p>}
+            </div>
+          </details>
         </div>
       </aside>
 
-      <main id="main-content" className="main-content" tabIndex={-1}>
+      <main ref={mainRef} id="main-content" className="main-content" tabIndex={-1}>
         <header className="topbar">
           <span>
-            工作台 <span aria-hidden="true">/</span> {steps[step]}
+            <button type="button" className="workspace-home-link" onClick={goHome}>
+              首页
+            </button>
+            <Icon name={stepIcons[step]} />
+            <span className="breadcrumb-workspace">个人工作区</span>
+            <span aria-hidden="true">/</span>
+            <strong>{steps[step]}</strong>
           </span>
-          <StatusBadge label={user ? `已登录 · ${user.display_name}` : '本地会话 · 未登录'} />
+          <button
+            type="button"
+            className="account-button"
+            aria-expanded={accountOpen}
+            aria-controls="account-panel"
+            onClick={() => setAccountOpen(!accountOpen)}
+          >
+            <span className="avatar">
+              <Icon name="user" />
+            </span>
+            {user ? user.display_name : '登录账号'}
+            <span aria-hidden="true">⌄</span>
+          </button>
         </header>
-        <div className="page-intro">
-          <p className="eyebrow">CAREERPILOT / WORKSPACE</p>
-          <h1>你的求职准备，从经历开始。</h1>
-          <p>整理个人资料，选择目标岗位，核对证据，再生成准备计划。</p>
-        </div>
-        <div className="demo-notice">
-          <span className="notice-label">开发预览</span>
-          <p>
-            登录后可上传资料并发起分析。真实分析需要启动项目依赖并配置模型；「样例演练」可离线预览。
-          </p>
-        </div>
 
-        <section className="panel session-panel" aria-labelledby="session-title">
-          <h2 id="session-title">{user ? '当前账号' : '登录开发账号'}</h2>
+        <section
+          id="account-panel"
+          hidden={!accountOpen && !authError}
+          className="panel session-panel"
+          aria-labelledby="session-title"
+        >
+          <div className="panel-title">
+            <h2 id="session-title">{user ? '当前账号' : '登录你的工作区'}</h2>
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => {
+                setAccountOpen(false);
+                setAuthError('');
+              }}
+            >
+              收起
+            </button>
+          </div>
           {user ? (
             <div className="session-current">
               <p>
@@ -509,14 +640,23 @@ export default function App() {
           )}
         </section>
 
+        <div className="page-intro" key={step}>
+          <div className="intro-copy">
+            <h1>{pageCopy[step][0]}</h1>
+            <p>{pageCopy[step][1]}</p>
+          </div>
+        </div>
+
         {step === 0 && (
           <section aria-labelledby="documents-title">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">01 / 资料准备</p>
-                <h2 id="documents-title">先让经历有据可查</h2>
+                <h2 id="documents-title">你的资料</h2>
+                <p className="muted small">准备简历与项目说明，开始一次有依据的分析。</p>
               </div>
-              <span className="muted small">简历 + 项目说明</span>
+              <span className="document-scope">
+                <Icon name="shield" /> 个人经历证据
+              </span>
             </div>
             <div className="document-grid">
               <div className="panel upload-panel">
@@ -525,40 +665,63 @@ export default function App() {
                     <path d="M12 16V4m-4 4 4-4 4 4M5 15v5h14v-5" />
                   </svg>
                 </div>
-                <h3>添加个人资料</h3>
-                <p className="muted">支持有文本层 PDF、Markdown、TXT；上传后等待解析与索引就绪。</p>
+                <h3>添加资料</h3>
+                <p className="muted">简历或项目说明，让你的能力有迹可循。</p>
+                {!user && (
+                  <p className="upload-login-hint">
+                    上传前需要登录。
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => setAccountOpen(true)}
+                    >
+                      去登录
+                    </button>
+                  </p>
+                )}
                 <DocumentUpload
                   key={user?.id ?? 'anonymous'}
                   userId={user?.id}
                   onReadyChange={setDocumentIds}
+                  onLibraryChange={() => setDocumentRevision((value) => value + 1)}
+                  onLogin={() => setAccountOpen(true)}
                 />
               </div>
               <div className="panel sample-panel">
-                <span className="eyebrow">无需个人资料</span>
-                <h3>用一套合成资料走一遍</h3>
+                <span className="sample-label">
+                  <Icon name="analysis" /> 交互示例
+                </span>
+                <h3>先走一遍准备流程</h3>
                 <p className="muted">
-                  示例简历、校园项目和后端实习 JD 已准备好，包含三种匹配情况。
+                  合成简历、校园项目和岗位 JD 已准备好。无需登录，也能核对分析与证据。
                 </p>
-                <ul className="file-list">
-                  <li>
-                    <span className="file-type">MD</span>
-                    <span>
-                      resume-demo.md<small>虚构学生简历</small>
-                    </span>
-                  </li>
-                  <li>
-                    <span className="file-type">MD</span>
-                    <span>
-                      project-demo.md<small>数据库设计与缓存经历</small>
-                    </span>
-                  </li>
-                </ul>
-                <button className="primary-button" onClick={loadSample}>
-                  载入合成样例 <span aria-hidden="true">→</span>
+                <div className="sample-file-stack" aria-hidden="true">
+                  <span>
+                    <Icon name="documents" />
+                  </span>
+                  <span>
+                    <Icon name="analysis" />
+                  </span>
+                  <i />
+                </div>
+                <button className="secondary-button" onClick={openSample}>
+                  体验完整示例 <Icon name="arrow" />
                 </button>
               </div>
             </div>
+            {documentIds.length > 0 && (
+              <div className="workspace-next-step">
+                <p>
+                  <strong>{documentIds.length} 份资料可用于分析</strong>
+                  <span>接下来，明确这次的目标岗位。</span>
+                </p>
+                <button type="button" className="primary-button" onClick={() => navigateStep(1)}>
+                  继续，填写目标岗位 <Icon name="arrow" />
+                </button>
+              </div>
+            )}
             <DocumentManager
+              revision={documentRevision}
               key={user?.id ?? 'anonymous'}
               userId={user?.id}
               onUpdated={(id) => {
@@ -586,9 +749,6 @@ export default function App() {
                 }
               }}
             />
-            <div className="footnote">
-              原始资料、片段与结论分开保存。缺少证据时，系统应如实标记“资料未体现”。
-            </div>
           </section>
         )}
 
@@ -596,10 +756,15 @@ export default function App() {
           <section aria-labelledby="job-title">
             <div className="section-heading">
               <div>
-                <p className="eyebrow">02 / 目标岗位</p>
                 <h2 id="job-title">这次，准备哪个岗位？</h2>
               </div>
-              <button className="secondary-button" onClick={loadSample}>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  loadSample();
+                  navigateStep(1);
+                }}
+              >
                 载入示例 JD
               </button>
             </div>
@@ -634,6 +799,8 @@ export default function App() {
               </p>
 
               <JdVersionBar
+                sampleMode={sampleLoaded}
+                canSave={Boolean(title.trim() && jd.trim())}
                 job={job}
                 dirty={jobDirty}
                 busy={jobBusy}
@@ -644,68 +811,39 @@ export default function App() {
               />
 
               <div className="form-actions">
-                <button className="text-button" onClick={() => setStep(0)}>
+                <button className="text-button" onClick={() => navigateStep(0)}>
                   返回资料准备
                 </button>
 
                 <button
-                  className="primary-button"
-                  disabled={!sampleLoaded}
+                  className={
+                    sampleLoaded || (job && !job.sample && !jobDirty)
+                      ? 'primary-button'
+                      : 'secondary-button'
+                  }
                   aria-describedby="sample-guidance"
                   onClick={() => {
-                    setAnalysisVisible(true);
-                    setStep(2);
+                    setAnalysisVisible(sampleLoaded);
+                    navigateStep(2);
                   }}
                 >
-                  查看样例分析 <span aria-hidden="true">→</span>
+                  {sampleLoaded ? '查看样例分析' : '前往匹配分析'} <Icon name="arrow" />
                 </button>
               </div>
             </div>
           </section>
         )}
 
-        {step === 2 &&
-          (analysisVisible && sampleLoaded ? (
-            <AnalysisPanel />
-          ) : !hasRealAnalysis ? (
-            <section className="panel empty-result">
-              <p className="eyebrow">03 / 匹配分析</p>
-              <h2>从一份资料和一个岗位开始</h2>
-              <p className="muted">先载入合成资料和示例 JD，查看带原文证据的分析页面。</p>
-              <button className="primary-button" onClick={loadSample}>
-                载入合成样例
-              </button>
-            </section>
-          ) : null)}
-        {step === 2 && analysis && (
-          <section className="panel plan-entry">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">下一步</p>
-                <h3>分析完成，生成准备计划</h3>
-              </div>
-              <button type="button" className="primary-button" onClick={() => setStep(3)}>
-                生成准备计划 →
-              </button>
-            </div>
-            <p className="small muted">
-              根据分析结果、目标日期和每天可用时间生成计划草稿；确认前不会创建正式任务。
-            </p>
-            {analysisStale && (
-              <p className="error-text small" role="status">
-                岗位或资料已更新，上次分析已过期；请重新分析后再生成计划。
-              </p>
-            )}
-          </section>
-        )}
-        <div
-          className="panel"
-          hidden={step === 0 || step === 3 || (step === 2 && (!hasRealAnalysis || analysisVisible))}
-        >
+        {step === 2 && analysisVisible && sampleLoaded && <AnalysisPanel />}
+        <div className="panel" hidden={step !== 2 || (analysisVisible && sampleLoaded)}>
           {(!hasAuthToken() || user) && (
             <JdImport
               key={user?.id ?? 'anonymous'}
               jd={jd}
+              loggedIn={Boolean(user)}
+              onLogin={() => setAccountOpen(true)}
+              onGoToDocuments={() => navigateStep(0)}
+              onGoToJob={() => navigateStep(1)}
               title={title}
               documentIds={documentIds}
               job={job}
@@ -721,19 +859,40 @@ export default function App() {
                   sessionStorage.removeItem(ANALYSIS_KEY);
                 }
                 setAnalysis(result);
-                setHasRealAnalysis(result !== null);
                 setAnalysisStale(result?.stale ?? false);
                 if (result) setAnalysisVisible(false);
               }}
               initialAnalysis={analysis}
-              onGoToPlan={() => setStep(3)}
+              onGoToPlan={() => navigateStep(3)}
             />
           )}
         </div>
+        {step === 2 && analysis && (
+          <section className="panel plan-entry">
+            <div className="section-heading">
+              <div>
+                <h3>分析完成，生成准备计划</h3>
+              </div>
+              <button type="button" className="primary-button" onClick={() => navigateStep(3)}>
+                生成准备计划 →
+              </button>
+            </div>
+            <p className="small muted">
+              根据分析结果、目标日期和每天可用时间生成计划草稿；确认前不会创建正式任务。
+            </p>
+            {analysisStale && (
+              <p className="error-text small" role="status">
+                岗位或资料已更新，上次分析已过期；请重新分析后再生成计划。
+              </p>
+            )}
+          </section>
+        )}
         {step === 3 && <PlanPanel analysisId={analysis?.id} analysisTitle={title} />}
+        {step === 4 && <KnowledgeLibrary userId={user?.id} onLogin={() => setAccountOpen(true)} />}
         <footer className="page-footer">
+          <EffectsToggle />
           <span>CareerPilot · CS353FZ</span>
-          <span>开发预览</span>
+          <span>以经历为依据，以行动为下一步。</span>
         </footer>
       </main>
     </div>

@@ -1,4 +1,6 @@
 import type { components } from './schema';
+import type { Role } from './knowledge';
+import type { KnowledgeSource, KnowledgeQuery, KnowledgeQueryResult } from './m3-types';
 import type {
   DocumentDeleteAccepted,
   DocumentExtraction,
@@ -122,6 +124,17 @@ async function request<T>(
 }
 
 export const api = {
+  listKnowledgeSources: (role: Role, signal?: AbortSignal) =>
+    request<{ items: KnowledgeSource[] }>(
+      'GET',
+      `/api/v1/knowledge/sources?role=${encodeURIComponent(role)}`,
+      { signal: knowledgeSignal(signal) },
+    ),
+  queryKnowledge: (body: KnowledgeQuery, signal?: AbortSignal) =>
+    request<KnowledgeQueryResult>('POST', '/api/v1/knowledge/query', {
+      body,
+      signal: knowledgeSignal(signal),
+    }),
   login: (body: LoginRequest) => request<TokenResult>('POST', '/api/v1/auth/login', { body }),
   me: () => request<UserResult>('GET', '/api/v1/me'),
   live: () => request<Liveness>('GET', '/health/live'),
@@ -189,3 +202,8 @@ export const api = {
     }),
   docsUrl: `${apiBase}/docs`,
 };
+
+function knowledgeSignal(signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(30000);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
