@@ -1,4 +1,5 @@
 import StatusBadge from './StatusBadge';
+import { useEffect, useState } from 'react';
 
 /** 当前岗位在本地记录的版本信息；sample 表示只保存在本地的演示岗位。 */
 export interface JobVersionInfo {
@@ -16,6 +17,8 @@ export interface JobNotice {
 
 interface JdVersionBarProps {
   job: JobVersionInfo | null;
+  sampleMode?: boolean;
+  canSave?: boolean;
   dirty: boolean;
   busy: boolean;
   notice: JobNotice | null;
@@ -26,6 +29,8 @@ interface JdVersionBarProps {
 
 export default function JdVersionBar({
   job,
+  sampleMode = false,
+  canSave = true,
   dirty,
   busy,
   notice,
@@ -33,7 +38,17 @@ export default function JdVersionBar({
   onSave,
   onSampleSave,
 }: JdVersionBarProps) {
-  const saveDisabled = busy || (job !== null && !dirty);
+  const saveDisabled = !canSave || busy || (job !== null && !job.sample && !dirty);
+  const [confirmed, setConfirmed] = useState(false);
+  useEffect(() => {
+    if (notice?.tone !== 'success') {
+      setConfirmed(false);
+      return;
+    }
+    setConfirmed(true);
+    const timer = window.setTimeout(() => setConfirmed(false), 1800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   return (
     <div className="jd-version-bar">
       <div className="jd-version-head">
@@ -57,17 +72,36 @@ export default function JdVersionBar({
         )}
       </div>
       <div className="form-actions jd-version-actions">
-        <button
-          type="button"
-          className="text-button"
-          onClick={onSampleSave}
-          disabled={busy || (job?.sample === true && !dirty)}
-        >
-          保存为本地样例
-        </button>
-        <button type="button" className="primary-button" onClick={onSave} disabled={saveDisabled}>
-          {busy ? '保存中…' : job ? '保存新版本' : '保存岗位'}
-        </button>
+        {sampleMode ? (
+          <button
+            type="button"
+            className="text-button"
+            data-confirmed={(confirmed && !dirty) || undefined}
+            onClick={onSampleSave}
+            disabled={!canSave || busy || (job?.sample === true && !dirty)}
+          >
+            {confirmed && !dirty ? '✓ 本地样例已保存' : '保存为本地样例'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="primary-button"
+            data-confirmed={(confirmed && !dirty) || undefined}
+            aria-busy={busy}
+            onClick={onSave}
+            disabled={saveDisabled}
+          >
+            {busy
+              ? '保存中…'
+              : confirmed && !dirty
+                ? '✓ 岗位已保存'
+                : job && !job.sample && !dirty
+                  ? '岗位已保存'
+                  : job && !job.sample
+                    ? '保存新版本'
+                    : '保存岗位'}
+          </button>
+        )}
       </div>
       {notice && (
         <p
@@ -81,6 +115,16 @@ export default function JdVersionBar({
           role="status"
         >
           {notice.text}
+          {notice.tone === 'danger' && (
+            <button
+              type="button"
+              className="text-button inline-retry"
+              disabled={!canSave || busy}
+              onClick={sampleMode ? onSampleSave : onSave}
+            >
+              重试保存
+            </button>
+          )}
         </p>
       )}
       {stale && (

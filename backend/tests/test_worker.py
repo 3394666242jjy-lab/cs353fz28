@@ -12,6 +12,7 @@ import pytest
 
 from app import worker
 from app.config import Settings
+from app.rag.chunking import parse_document
 from app.schemas.analysis import DocumentVersion, TextLocator
 from app.services.storage import read_upload, save_upload
 
@@ -39,7 +40,7 @@ def settings(tmp_path):
 
 def _successful_indexer():
     async def fake(raw: bytes, **kwargs):
-        return INDEXED
+        return SimpleNamespace(**vars(INDEXED), extraction=parse_document(raw))
 
     return fake
 
@@ -184,6 +185,9 @@ def test_known_pdf_page_diagnostic_does_not_echo_untrusted_text():
     )
     assert "第 3 页" in worker._public_index_error(DocumentParseError(current))
     assert "第 4 页" in worker._public_index_error(DocumentParseError(strict))
+    ocr = "PDF 第 5 页没有可用的文字层，且本地 OCR 未能识别文字。"
+    assert "第 5 页" in worker._public_index_error(DocumentParseError(ocr))
+    assert "secret" not in worker._public_index_error(DocumentParseError(ocr + " secret"))
     assert "secret" not in worker._public_index_error(DocumentParseError(current + " secret"))
 
 

@@ -346,7 +346,6 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
     <section className="plan-panel" aria-labelledby="plan-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">M2 / 准备计划</p>
           <h2 id="plan-title">把分析变成可执行的计划</h2>
         </div>
         <div className="mode-switch" role="group" aria-label="计划模式">
@@ -478,7 +477,9 @@ export default function PlanPanel({ analysisId, analysisTitle, onConfirmed }: Pl
           <div className="plan-actions">
             {isConfirmed ? (
               <span className="small muted">
-                正式任务已保存；重复确认会返回同一结果，不会重复创建。
+                {mode === 'sample'
+                  ? '样例任务仅在当前页面演示，未保存到后端。'
+                  : '正式任务已保存；重复确认会返回同一结果，不会重复创建。'}
               </span>
             ) : (
               <>

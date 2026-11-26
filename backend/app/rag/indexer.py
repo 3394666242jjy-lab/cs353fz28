@@ -17,6 +17,7 @@ from app.rag.bm25 import Bm25Encoder
 from app.rag.chunking import (
     PARSER_VERSION,
     PDF_PARSER_VERSION,
+    ParsedDocument,
     chunk_document,
     chunking_config_version,
     parse_document,
@@ -64,6 +65,7 @@ class IndexedDocument(ContractModel):
     index_version: str
     chunks: list[IndexedChunk]
     document_versions: list[DocumentVersion]
+    extraction: ParsedDocument = Field(exclude=True, repr=False)
 
 
 def make_chunk_id(document_id: str, version: int, ordinal: int) -> str:
@@ -199,4 +201,5 @@ async def index_document(
             for ordinal, ((text, locator), point) in enumerate(zip(chunks, points, strict=True))
         ],
         document_versions=[DocumentVersion(document_id=document_id, version=version)],
+        extraction=parsed,
     )

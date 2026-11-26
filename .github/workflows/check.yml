@@ -19,6 +19,8 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12"
+      - name: Install OpenCV runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
       - name: Install locked backend dependencies
         working-directory: backend
         run: uv sync --frozen
@@ -81,5 +83,7 @@ jobs:
         working-directory: frontend
         run: |
           node ../scripts/test_frontend_events.mjs
+          node ../scripts/test_frontend_knowledge.mjs
+          node ../scripts/test_frontend_workspace.mjs
           npm run format:check
           npm run build

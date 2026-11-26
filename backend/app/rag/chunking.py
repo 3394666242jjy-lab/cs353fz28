@@ -1,7 +1,9 @@
-"""文本解析与切分（RAG 模块，成员 C，issue #8）。
+"""文本解析与切分（RAG 模块，成员 C，issue #8 / issue #46）。
 
 M1 支持 UTF-8 Markdown/TXT 和具有文本层的 PDF。文本使用行号定位，PDF
-逐页提取并使用页码定位；不提供 OCR。
+逐页提取并使用页码定位。issue #46 起，含栅格图片的页面对图片区域做局部
+OCR（rapidocr-onnxruntime，本地推理）并把识别文字合并进该页；文本层为
+空且 OCR 无结果的文件仍按拒绝处理。
 
 切分器遵守两条不变式：
 
@@ -21,14 +23,22 @@ from io import BytesIO
 from pydantic import Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from pypdf.generic import ContentStream
 
 from app.schemas.analysis import TextLocator
 from app.schemas.common import ContractModel
 
 # 解析器版本：解析规则变化时升级，并随索引进 document_versions.parser_version 留档。
 PARSER_VERSION = "text-utf8-lf-v1"
-PDF_PARSER_VERSION = "pypdf-text-pages-v2"
+PDF_PARSER_VERSION = "pdf-text-ocr-pages-v3"
+
+# 图片 OCR 参数：置信度下限、渲染分辨率、渲染边长上限（防超大图吃掉内存）与
+# 参与 OCR 的最小图片边长（pt，点状装饰图不值得识别）。
+_OCR_MIN_CONFIDENCE = 0.5
+_OCR_RENDER_DPI = 180
+_OCR_MAX_RENDER_SIDE = 2400
+_OCR_MIN_IMAGE_SIDE = 8
+
+_ocr_engine = None
 
 # Markdown ATX 标题行（允许前置空格），用于识别小节边界；非标题的 # 文本不受影响。
 HEADING_PATTERN = re.compile(r"^ {0,3}#{1,6} ")
@@ -58,113 +68,114 @@ class DocumentChunk(ContractModel):
     locator: TextLocator
 
 
-def _reject_graphic_content(page, reader, page_number: int) -> None:
-    """Fail closed on graphics that could contain unextractable text.
+def _get_ocr_engine():
+    """惰性初始化本地 OCR（rapidocr-onnxruntime）；缺依赖时给出可操作的报错。"""
+    global _ocr_engine
+    if _ocr_engine is None:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+        except ImportError as error:
+            raise DocumentParseError(
+                "PDF 图片识别组件未安装；请安装 rapidocr-onnxruntime，或改用仅含文字的 PDF/TXT"
+            ) from error
+        _ocr_engine = RapidOCR()
+    return _ocr_engine
 
-    This intentionally rejects decorative graphics too: without OCR or a
-    user comparing the entire extraction we cannot distinguish them safely.
-    Nested Form XObjects are inspected recursively, including text-only forms.
-    """
-    allowed = {
-        b"q",
-        b"Q",
-        b"cm",
-        b"w",
-        b"J",
-        b"j",
-        b"M",
-        b"d",
-        b"ri",
-        b"i",
-        b"m",
-        b"l",
-        b"c",
-        b"v",
-        b"y",
-        b"h",
-        b"re",
-        b"W",
-        b"W*",
-        b"n",
-        b"BT",
-        b"ET",
-        b"Tc",
-        b"Tw",
-        b"Tz",
-        b"TL",
-        b"Tf",
-        b"Tr",
-        b"Ts",
-        b"Td",
-        b"TD",
-        b"Tm",
-        b"T*",
-        b"Tj",
-        b"TJ",
-        b"'",
-        b'"',
-        b"CS",
-        b"cs",
-        b"SC",
-        b"SCN",
-        b"sc",
-        b"scn",
-        b"G",
-        b"g",
-        b"RG",
-        b"rg",
-        b"K",
-        b"k",
-        b"BMC",
-        b"BDC",
-        b"EMC",
-        b"MP",
-        b"DP",
-        b"BX",
-        b"EX",
-        b"Do",
-    }
 
-    def reject():
-        raise DocumentParseError(
-            f"PDF 第 {page_number} 页含无法核验的图形内容（含图片、头像或矢量图）；"
-            "请上传仅含可复制文字的 PDF，或使用 UTF-8 TXT/Markdown"
-        )
+def _pixmap_to_ocr_lines(pix) -> list[str]:
+    """对一块渲染好的位图跑 OCR，按阅读顺序返回去空白后的文字行。"""
+    import numpy as np
 
-    if page.get("/Annots"):
-        reject()
+    array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
+    if pix.n > 3:
+        array = array[:, :, :3]
+    result, _ = _get_ocr_engine()(array)
+    if not result:
+        return []
 
-    def resolve(obj):
-        return obj.get_object() if hasattr(obj, "get_object") else obj
+    def reading_key(item):
+        box = item[0]
+        return (min(point[1] for point in box), min(point[0] for point in box))
 
-    def inspect(stream, resources, ancestors):
-        if stream is None:
-            return
-        if len(ancestors) > 32:
-            reject()
-        fonts = resolve(resources.get("/Font") or {})
-        if not isinstance(fonts, dict):
-            reject()
-        for font in fonts.values():
-            if resolve(font).get("/Subtype") == "/Type3":
-                reject()
-        for operands, op in ContentStream(stream, reader).operations:
-            if op not in allowed:
-                reject()
-            if op != b"Do":
+    lines: list[str] = []
+    for _box, text, score in sorted(result, key=reading_key):
+        normalized = " ".join(str(text).split())
+        if score >= _OCR_MIN_CONFIDENCE and normalized:
+            lines.append(normalized)
+    return lines
+
+
+def _ocr_page_image_rects(page) -> tuple[list[str], bool]:
+    """按坐标顺序识别图片区域，并返回页面是否有可见的待识别图片。"""
+    import pymupdf
+
+    rects = []
+    seen = set()
+    for info in page.get_images(full=True):
+        try:
+            found = page.get_image_rects(info[0])
+        except Exception:  # 损坏或非标图片（如缺尺寸）跳过，不影响整页文字提取
+            continue
+        for rect in found:
+            rect = (rect * page.rotation_matrix) & page.rect
+            if (
+                rect.is_empty
+                or rect.width < _OCR_MIN_IMAGE_SIDE
+                or rect.height < _OCR_MIN_IMAGE_SIDE
+            ):
                 continue
-            resource = resolve(resources.get("/XObject") or {})
-            target = resource.get(operands[0]) if operands else None
-            if target is None:
-                reject()
-            target = target.get_object()
-            if target.get("/Subtype") != "/Form" or id(target) in ancestors:
-                reject()
-            inspect(
-                target, resolve(target.get("/Resources") or resources), ancestors | {id(target)}
-            )
+            key = (round(rect.x0), round(rect.y0), round(rect.x1), round(rect.y1))
+            if key not in seen:
+                seen.add(key)
+                rects.append(rect)
+    rects.sort(key=lambda item: (item.y0, item.x0))
+    lines: list[str] = []
+    for rect in rects:
+        scale = min(_OCR_RENDER_DPI / 72, (_OCR_MAX_RENDER_SIDE - 2) / max(rect.width, rect.height))
+        pix = page.get_pixmap(clip=rect, matrix=pymupdf.Matrix(scale, scale))
+        lines.extend(_pixmap_to_ocr_lines(pix))
+    return lines, bool(rects)
 
-    inspect(page.get_contents(), resolve(page.get("/Resources") or {}), set())
+
+def _normalized_line(line: str) -> str:
+    return " ".join(line.split()).lower()
+
+
+def _extract_pdf_pages(reader: PdfReader, raw: bytes) -> list[list[str]]:
+    """逐页提取文字；含栅格图片的页面对图片区域做局部 OCR 并去重合并。"""
+    try:
+        import pymupdf
+    except ImportError as error:
+        raise DocumentParseError("PDF 图片渲染依赖 pymupdf 未安装；请安装 pymupdf>=1.26") from error
+    try:
+        doc = pymupdf.open(stream=raw, filetype="pdf")
+    except Exception as error:  # 渲染失败按解析失败处理，不向上游抛裸异常
+        raise DocumentParseError("PDF 图片渲染失败，无法读取图片内容") from error
+    pages: list[list[str]] = []
+    unreadable_page: int | None = None
+    try:
+        for page_number, page in enumerate(reader.pages, start=1):
+            text = (page.extract_text() or "").replace("\r\n", "\n").replace("\r", "\n")
+            lines = text.split("\n")
+            while lines and not lines[-1].strip():
+                lines.pop()
+            known = {_normalized_line(line) for line in lines if line.strip()}
+            ocr_lines, has_images = _ocr_page_image_rects(doc[page_number - 1])
+            if has_images and not (known or ocr_lines) and unreadable_page is None:
+                unreadable_page = page_number
+            for ocr_line in ocr_lines:
+                normalized = _normalized_line(ocr_line)
+                if normalized and normalized not in known:
+                    known.add(normalized)
+                    lines.append(ocr_line)
+            pages.append(lines)
+    finally:
+        doc.close()
+    if unreadable_page is not None and any(line.strip() for page in pages for line in page):
+        raise DocumentParseError(
+            f"PDF 第 {unreadable_page} 页没有可用的文字层，且本地 OCR 未能识别文字。"
+        )
+    return pages
 
 
 def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocument:
@@ -178,14 +189,7 @@ def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocumen
             reader = PdfReader(BytesIO(raw), strict=True)
             if reader.is_encrypted:
                 raise DocumentParseError("暂不支持加密 PDF，请上传可直接读取的文件")
-            pages = []
-            for page_number, page in enumerate(reader.pages, start=1):
-                _reject_graphic_content(page, reader, page_number)
-                text = (page.extract_text() or "").replace("\r\n", "\n").replace("\r", "\n")
-                lines = text.split("\n")
-                while lines and not lines[-1].strip():
-                    lines.pop()
-                pages.append(lines)
+            pages = _extract_pdf_pages(reader, raw)
         except DocumentParseError:
             raise
         except (
@@ -201,7 +205,10 @@ def parse_document(raw: bytes, *, file_type: str | None = None) -> ParsedDocumen
         ) as error:
             raise DocumentParseError("PDF 文件损坏或无法解析") from error
         if not any(line.strip() for page in pages for line in page):
-            raise DocumentParseError("PDF 没有可提取的文本层；扫描件暂不支持")
+            raise DocumentParseError(
+                "PDF 未能提取到任何文字（文本层为空且图片 OCR 无结果）；"
+                "请确认不是空白或纯装饰图形文档"
+            )
         lines = [line for page in pages for line in page]
         return ParsedDocument(text="\n".join(lines), lines=lines, pages=pages)
     try:

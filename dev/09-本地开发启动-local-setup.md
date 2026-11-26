@@ -99,7 +99,7 @@ npm run dev
 | D Agent | backend/app/agent/pipeline.py、contracts.py | 真实生成模型、B/C 完整 Evidence 适配器与 PDF 全链路联调 |
 | 项目负责人 | 文档、schemas 评审、Compose 和发布配置 | 确认公共契约，整合模块，最终测试、ECS 部署与报告 |
 
-RAG 支持文本层 PDF 与 UTF-8 Markdown/TXT，PDF 引用按页定位；证据原文由 MongoDB 提供。LangGraph 接入说明见 [10 Agent 模块接入](10-Agent模块接入-agent-guide.md)。真实模型与存储仍需在目标环境联调；后续依赖使用 `uv add` 并提交锁文件。
+RAG 支持 PDF 与 UTF-8 Markdown/TXT。PDF 保留原页码，对带图片的区域尝试本地 OCR；如果一页有待识别图片，但文字层和 OCR 均未得到文字，解析会报错。图文混排页请核对提取正文和引用，尤其是图中的姓名、日期和数字。证据原文由 MongoDB 提供。LangGraph 接入说明见 [10 Agent 模块接入](10-Agent模块接入-agent-guide.md)。真实模型与存储仍需在目标环境联调；后续依赖使用 `uv add` 并提交锁文件。
 
 PDF 提取结果按原页码保存，包括空白页。为了避免静默遗漏图形中的正文，当前采用严格保守模式：包含图片（包括头像或 Logo）、矢量绘制、注释、未知绘制指令或无法确认内容的 PDF 会被拒绝；不提供 OCR。请将内容转换为仅含可复制文字的 PDF，或上传 UTF-8 TXT/Markdown。即使文本能够复制，上传前也请核对解析结果和引用；安全处理不能保证任意 PDF 的视觉排版和提取文本完全一致。
 
