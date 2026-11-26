@@ -3,8 +3,10 @@ import { ApiError, api } from '../api/client';
 
 import { describeError, isAbortError, type UiError } from '../api/errors';
 import { subscribeExecutionEvents } from '../api/events';
-import { sampleAnalysis, sampleEvidence } from '../api/fixtures';
+import { sampleAnalysis } from '../api/fixtures';
 import StatusBadge from '../components/StatusBadge';
+import AnalysisResults from '../components/AnalysisResults';
+import { analysisBlockers } from '../api/analysis-readiness';
 import type { JobVersionInfo } from '../components/JdVersionBar';
 import type { ExecutionEvent } from '../api/m2-types';
 import type { components } from '../api/schema';
@@ -12,8 +14,6 @@ import type { components } from '../api/schema';
 type AnalysisResult = components['schemas']['AnalysisResult'];
 type ExecutionResult = components['schemas']['ExecutionResult'];
 type PendingInput = NonNullable<ExecutionResult['pending_input']>;
-type Evidence = components['schemas']['Evidence'];
-type EvidenceRef = components['schemas']['EvidenceRef'];
 
 type Phase = 'idle' | 'creating' | 'polling' | 'waiting' | 'succeeded' | 'failed';
 type Mode = 'real' | 'sample';
@@ -41,12 +41,6 @@ function saveCursor(executionId: string, eventId: string) {
   sessionStorage.setItem(CURSOR_KEY, JSON.stringify({ executionId, eventId }));
 }
 
-const resultLabels = {
-  supported: { label: '有证据支持', tone: 'success' },
-  partial: { label: '部分支持', tone: 'warning' },
-  not_evidenced: { label: '资料未体现', tone: 'neutral' },
-} as const;
-
 const phaseLabels: Record<Phase, string> = {
   idle: '等待开始',
   creating: '正在创建岗位与分析任务…',
@@ -59,6 +53,10 @@ const phaseLabels: Record<Phase, string> = {
 interface JdImportProps {
   /** 父组件 App 传入的 JD 原文。 */
   jd: string;
+  loggedIn: boolean;
+  onLogin: () => void;
+  onGoToDocuments: () => void;
+  onGoToJob: () => void;
   /** 岗位名称，对应 POST /jobs 的 title。 */
   title?: string;
   /** 已就绪的资料 ID；真实分析必需。 */
@@ -75,12 +73,6 @@ interface JdImportProps {
   initialAnalysis?: AnalysisResult | null;
   /** 计划确认类等待输入跳转到计划页。 */
   onGoToPlan?: () => void;
-}
-
-function describeLocator(locator: Evidence['locator']): string {
-  return locator.kind === 'pdf'
-    ? `PDF 第 ${locator.page} 页`
-    : `第 ${locator.line_start}–${locator.line_end} 行`;
 }
 
 function readPendingExecution(): {
@@ -115,6 +107,10 @@ function readPendingExecution(): {
 
 export default function JdImport({
   jd,
+  loggedIn,
+  onLogin,
+  onGoToDocuments,
+  onGoToJob,
   title = '',
   documentIds = [],
   job = null,
@@ -131,9 +127,6 @@ export default function JdImport({
   const [error, setError] = useState<UiError | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [selectedEvidence, setSelectedEvidence] = useState<Evidence | null>(null);
-  const [evidenceLoading, setEvidenceLoading] = useState<string | null>(null);
   const [streamNotice, setStreamNotice] = useState<string | null>(null);
   const [streamStage, setStreamStage] = useState<string | null>(null);
   const [pendingInput, setPendingInput] = useState<PendingInput | null>(null);
@@ -153,7 +146,6 @@ export default function JdImport({
   const phaseRef = useRef<Phase>('idle');
   const onAnalysisRef = useRef(onAnalysis);
   const onJobCreatedRef = useRef(onJobCreated);
-  const evidenceRequestRef = useRef(0);
   const inputRef = useRef({ jd, title, documentIds: JSON.stringify(documentIds) });
 
   const running = phase === 'creating' || phase === 'polling';
@@ -220,7 +212,6 @@ export default function JdImport({
     return () => {
       mountedRef.current = false;
       finishedRef.current = true;
-      evidenceRequestRef.current += 1;
       stopTimers();
       closeStream();
       abortRef.current?.abort();
@@ -348,8 +339,6 @@ export default function JdImport({
       setResumeError(null);
       setAnalysis(res.data);
       setPhase('succeeded');
-      setSelectedKey(null);
-      setSelectedEvidence(null);
       onAnalysisRef.current?.(res.data);
     } catch (err) {
       if (!mountedRef.current || controller.signal.aborted || isAbortError(err)) return;
@@ -489,7 +478,6 @@ export default function JdImport({
     fallingBackRef.current = false;
     executionIdRef.current = null;
     initialDocumentIdsRef.current = [];
-    evidenceRequestRef.current += 1;
     sessionStorage.removeItem(STORAGE_KEY);
     sessionStorage.removeItem(CURSOR_KEY);
     setPhase('idle');
@@ -505,14 +493,23 @@ export default function JdImport({
     setResumeError(null);
     setElapsed(0);
     setStartedAt(null);
-    setSelectedKey(null);
-    setSelectedEvidence(null);
-    setEvidenceLoading(null);
     finishedRef.current = false;
     onAnalysisRef.current?.(null);
   }
 
+  const blockers = analysisBlockers({
+    loggedIn,
+    documentCount: documentIds.length,
+    title,
+    jd,
+    saved: Boolean(job && !job.sample),
+    dirty: jobDirty,
+  });
   async function startReal() {
+    if (blockers.length) {
+      setError({ code: 'PREPARATION_REQUIRED', message: blockers[0].message });
+      return;
+    }
     if (!jd.trim()) {
       setError({ code: 'EMPTY_JD', message: '请先填写岗位 JD。' });
       return;
@@ -622,40 +619,6 @@ export default function JdImport({
     }, 700);
   }
 
-  async function toggleEvidence(ref: EvidenceRef) {
-    const key = `${ref.chunk_id}@${ref.version}`;
-    const requestId = ++evidenceRequestRef.current;
-    if (selectedKey === key) {
-      setSelectedKey(null);
-      setSelectedEvidence(null);
-      setEvidenceLoading(null);
-      return;
-    }
-    setSelectedKey(key);
-    setSelectedEvidence(null);
-    setEvidenceLoading(key);
-    try {
-      let evidence: Evidence | undefined;
-      if (mode === 'sample') {
-        evidence = sampleEvidence.find(
-          (item) => item.chunk_id === ref.chunk_id && item.version === ref.version,
-        );
-        if (!evidence) throw new Error('样例数据中没有这条证据。');
-      } else {
-        const res = await api.getEvidence(ref.chunk_id, ref.version);
-        evidence = res.data;
-      }
-      if (!evidence) throw new Error('没有找到对应证据。');
-      if (!mountedRef.current || requestId !== evidenceRequestRef.current) return;
-      setSelectedEvidence(evidence);
-    } catch (err) {
-      if (!mountedRef.current || requestId !== evidenceRequestRef.current) return;
-      setError(describeError(err));
-    } finally {
-      if (mountedRef.current && requestId === evidenceRequestRef.current) setEvidenceLoading(null);
-    }
-  }
-
   const addedDocuments = documentIds.filter(
     (id) => id.trim().length > 0 && !initialDocumentIdsRef.current.includes(id),
   );
@@ -664,13 +627,12 @@ export default function JdImport({
     <section className="jd-analysis" aria-labelledby="jd-analysis-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">真实分析 / 实时进度</p>
-          <h3 id="jd-analysis-title">提交岗位，等待分析结果</h3>
+          <h3 id="jd-analysis-title">{phase === 'succeeded' ? '匹配分析结果' : '开始匹配分析'}</h3>
         </div>
         <div className="mode-switch" role="group" aria-label="分析模式">
           <button
             type="button"
-            className={mode === 'real' ? 'primary-button' : 'text-button'}
+            className="mode-option"
             aria-pressed={mode === 'real'}
             disabled={busy}
             onClick={() => {
@@ -682,7 +644,7 @@ export default function JdImport({
           </button>
           <button
             type="button"
-            className={mode === 'sample' ? 'primary-button' : 'text-button'}
+            className="mode-option"
             aria-pressed={mode === 'sample'}
             disabled={busy}
             onClick={() => {
@@ -696,16 +658,49 @@ export default function JdImport({
       </div>
 
       <p className="small muted">
-        真实分析使用本次选中的 {documentIds.length} 份已就绪资料（最多 20 份）；进度优先用 SSE
-        实时事件推送，不可用时自动退回轮询。样例演练不访问后端。
+        {mode === 'sample'
+          ? '使用合成样例体验分析，不访问后端。'
+          : `使用已选的 ${documentIds.length} 份就绪资料进行分析（最多 20 份）。`}
       </p>
 
+      {mode === 'real' && !busy && blockers.length > 0 && (
+        <div className="analysis-prerequisites" id="analysis-prerequisites">
+          <p>{phase === 'succeeded' ? '再次分析前，还需要' : '开始前，还需要'}</p>
+          <ul>
+            {blockers.map((item) => (
+              <li key={item.action}>
+                <span>{item.message}</span>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={
+                    item.action === 'login'
+                      ? onLogin
+                      : item.action === 'documents'
+                        ? onGoToDocuments
+                        : onGoToJob
+                  }
+                >
+                  {item.action === 'login'
+                    ? '去登录'
+                    : item.action === 'documents'
+                      ? '选择资料'
+                      : '完善岗位'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="form-actions">
         <button
           type="button"
-          className="primary-button"
+          className={phase === 'succeeded' ? 'secondary-button' : 'primary-button'}
           onClick={() => void (mode === 'real' ? startReal() : startSample())}
-          disabled={busy}
+          disabled={busy || (mode === 'real' && blockers.length > 0)}
+          aria-describedby={
+            mode === 'real' && blockers.length > 0 ? 'analysis-prerequisites' : undefined
+          }
         >
           {busy
             ? phase === 'waiting'
@@ -765,13 +760,7 @@ export default function JdImport({
             {streamNotice}
           </p>
         )}
-        {running && (
-          <progress
-            max={POLL_TIMEOUT_MS / 1000}
-            value={Math.min(elapsed, POLL_TIMEOUT_MS / 1000)}
-            aria-label="分析进度（按已运行时间估算）"
-          />
-        )}
+        {running && <progress aria-label="分析进行中，完成时间取决于资料内容" />}
         {error && (
           <div className="error-box" role="alert">
             <strong>{error.code}</strong>
@@ -885,78 +874,11 @@ export default function JdImport({
               ))}
             </ul>
           )}
-          <div className="result-layout">
-            <div className="match-list">
-              {analysis.matches.map((match, index) => (
-                <article className="match-card" key={match.requirement_id}>
-                  <div className="match-top">
-                    <span className="item-number">要求 {String(index + 1).padStart(2, '0')}</span>
-                    <StatusBadge {...resultLabels[match.status]} />
-                  </div>
-                  <h3>{match.requirement}</h3>
-                  <p>{match.explanation}</p>
-                  {match.evidence_refs.length > 0 && (
-                    <div className="citation-list">
-                      {match.evidence_refs.map((ref) => {
-                        const key = `${ref.chunk_id}@${ref.version}`;
-                        return (
-                          <button
-                            key={key}
-                            type="button"
-                            className="citation"
-                            aria-expanded={selectedKey === key}
-                            disabled={evidenceLoading === key}
-                            onClick={() => void toggleEvidence(ref)}
-                          >
-                            <span aria-hidden="true">↗</span>{' '}
-                            {evidenceLoading === key ? '加载证据…' : '查看原文证据'}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {match.missing_information.length > 0 && (
-                    <div className="missing-info">
-                      <strong>可补充的信息</strong>
-                      <ul>
-                        {match.missing_information.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </article>
-              ))}
-            </div>
-            <aside className="evidence-panel" aria-live="polite">
-              {selectedEvidence ? (
-                <>
-                  <div className="panel-title">
-                    <h3>原文证据</h3>
-                    <button
-                      type="button"
-                      className="text-button"
-                      onClick={() => {
-                        evidenceRequestRef.current += 1;
-                        setSelectedKey(null);
-                        setSelectedEvidence(null);
-                        setEvidenceLoading(null);
-                      }}
-                    >
-                      关闭
-                    </button>
-                  </div>
-                  <p className="source-name">{selectedEvidence.filename}</p>
-                  <p className="muted small">
-                    版本 {selectedEvidence.version} · {describeLocator(selectedEvidence.locator)}
-                  </p>
-                  <blockquote>{selectedEvidence.quote}</blockquote>
-                </>
-              ) : (
-                <p className="muted small">点击「查看原文证据」，核对结论对应的原文位置。</p>
-              )}
-            </aside>
-          </div>
+          <AnalysisResults
+            key={`${analysis.id}-${mode}`}
+            analysis={analysis}
+            sample={mode === 'sample'}
+          />
         </div>
       )}
     </section>
