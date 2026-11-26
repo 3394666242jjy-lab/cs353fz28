@@ -6,7 +6,7 @@ from io import BytesIO
 
 import pytest
 from pypdf import PdfWriter
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
 from app.config import Settings
 from app.rag.chunking import DocumentParseError, parse_document
@@ -71,11 +71,11 @@ def test_multi_page_pdf_is_indexed_with_page_locators():
         "Second page projects",
     ]
     assert len({chunk.chunk_id for chunk in result.chunks}) == 2
-    assert result.parser_version == "pypdf-text-pages-v2"
+    assert result.parser_version == "pdf-text-ocr-pages-v3"
 
 
 def test_pdf_without_text_and_encrypted_pdf_are_rejected():
-    with pytest.raises(DocumentParseError, match="没有可提取的文本层"):
+    with pytest.raises(DocumentParseError, match="未能提取到任何文字"):
         parse_document(pdf_bytes(""), file_type=".pdf")
     with pytest.raises(DocumentParseError, match="加密"):
         parse_document(pdf_bytes("private", encrypted=True), file_type=".pdf")
@@ -138,7 +138,14 @@ def pdf_with_image(*, image_size, with_text):
     image = DecodedStreamObject()
     image.set_data(bytes([0, 0, 0]))
     image.update(
-        {NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Image")}
+        {
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Image"),
+            NameObject("/Width"): NumberObject(1),
+            NameObject("/Height"): NumberObject(1),
+            NameObject("/ColorSpace"): NameObject("/DeviceRGB"),
+            NameObject("/BitsPerComponent"): NumberObject(8),
+        }
     )
     font = DictionaryObject(
         {
@@ -168,16 +175,30 @@ def pdf_with_image(*, image_size, with_text):
     return output.getvalue()
 
 
-def test_scan_page_and_mixed_images_fail_closed_even_when_small():
-    with pytest.raises(DocumentParseError, match="图形内容"):
+def test_scan_only_page_without_ocr_result_is_rejected_but_mixed_pages_are_accepted():
+    # 纯图片页：图里没有可识别文字 → 全文无文字，仍拒绝
+    with pytest.raises(DocumentParseError, match="未能提取到任何文字"):
         parse_document(pdf_with_image(image_size=50, with_text=False), file_type=".pdf")
-    with pytest.raises(DocumentParseError, match="图形内容"):
-        parse_document(pdf_with_image(image_size=300, with_text=True), file_type=".pdf")
-    with pytest.raises(DocumentParseError, match="图形内容"):
-        parse_document(pdf_with_image(image_size=5, with_text=True), file_type=".pdf")
+    # 图文混合：文字保留，图片区域 OCR 无结果也不影响
+    parsed = parse_document(pdf_with_image(image_size=300, with_text=True), file_type=".pdf")
+    assert parsed.text == "Experience"
+    # 小于 8pt 的装饰小图直接跳过，不做 OCR
+    parsed_small = parse_document(pdf_with_image(image_size=5, with_text=True), file_type=".pdf")
+    assert parsed_small.text == "Experience"
 
 
-def test_vector_outline_mixed_with_extractable_text_is_rejected():
+def test_unreadable_scan_page_is_reported_even_with_text_on_another_page():
+    writer = PdfWriter()
+    writer.append(BytesIO(pdf_bytes("Experience")))
+    writer.append(BytesIO(pdf_with_image(image_size=300, with_text=False)))
+    output = BytesIO()
+    writer.write(output)
+
+    with pytest.raises(DocumentParseError, match="第 2 页没有可用的文字层"):
+        parse_document(output.getvalue(), file_type=".pdf")
+
+
+def test_vector_outline_mixed_with_extractable_text_is_accepted():
     writer = PdfWriter()
     writer.append(BytesIO(pdf_bytes("Experience")))
     page = writer.pages[0]
@@ -186,11 +207,11 @@ def test_vector_outline_mixed_with_extractable_text_is_rejected():
     page[NameObject("/Contents")] = writer._add_object(stream)
     output = BytesIO()
     writer.write(output)
-    with pytest.raises(DocumentParseError, match="图形内容"):
-        parse_document(output.getvalue(), file_type=".pdf")
+    parsed = parse_document(output.getvalue(), file_type=".pdf")
+    assert parsed.text == "Experience"
 
 
-def test_graphic_hidden_in_nested_form_is_rejected():
+def test_image_hidden_in_nested_form_is_ocr_scanned_with_text_preserved():
     writer = PdfWriter()
     writer.append(BytesIO(pdf_bytes("Experience")))
     page = writer.pages[0]
@@ -222,8 +243,8 @@ def test_graphic_hidden_in_nested_form_is_rejected():
     page[NameObject("/Contents")] = writer._add_object(content)
     out = BytesIO()
     writer.write(out)
-    with pytest.raises(DocumentParseError, match="图形内容"):
-        parse_document(out.getvalue(), file_type=".pdf")
+    parsed = parse_document(out.getvalue(), file_type=".pdf")
+    assert parsed.text == "Experience"
 
 
 def test_text_and_blank_pages_preserve_page_numbers():
@@ -231,7 +252,7 @@ def test_text_and_blank_pages_preserve_page_numbers():
     assert parsed.pages == [["First"], [], ["Third"]]
 
 
-def test_unknown_drawing_operator_fails_closed():
+def test_unknown_drawing_operator_does_not_block_text_extraction():
     writer = PdfWriter()
     writer.append(BytesIO(pdf_bytes("Experience")))
     content = DecodedStreamObject()
@@ -239,5 +260,66 @@ def test_unknown_drawing_operator_fails_closed():
     writer.pages[0][NameObject("/Contents")] = writer._add_object(content)
     out = BytesIO()
     writer.write(out)
-    with pytest.raises(DocumentParseError, match="图形内容"):
-        parse_document(out.getvalue(), file_type=".pdf")
+    parsed = parse_document(out.getvalue(), file_type=".pdf")
+    assert parsed.text == "Experience"
+
+
+def _rendered_text_png(text: str, *, width: float = 480, height: float = 200) -> bytes:
+    """把一行文字画进一张 PNG（用作 PDF 内嵌图片，模拟扫描件/截图）。"""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=width, height=height)
+    page.insert_text((24, height / 2), text, fontsize=30)
+    png = page.get_pixmap(dpi=300).tobytes("png")
+    doc.close()
+    return png
+
+
+def _scanned_pdf_bytes(*texts: str) -> bytes:
+    """把文字页整页渲染成图片，生成无文本层的纯图片（扫描件）PDF。"""
+    import pymupdf
+
+    source = pymupdf.open(stream=pdf_bytes(*texts), filetype="pdf")
+    output = pymupdf.open()
+    for page in source:
+        png = page.get_pixmap(dpi=180).tobytes("png")
+        new_page = output.new_page(width=page.rect.width, height=page.rect.height)
+        new_page.insert_image(new_page.rect, stream=png)
+    data = output.tobytes()
+    source.close()
+    output.close()
+    return data
+
+
+def test_scanned_pdf_page_text_is_recovered_by_ocr():
+    parsed = parse_document(_scanned_pdf_bytes("Hello CareerPilot Resume"), file_type=".pdf")
+    assert "careerpilot" in parsed.text.lower()
+    assert parsed.pages and parsed.pages[0]
+
+
+def test_mixed_page_merges_text_layer_and_image_ocr():
+    import pymupdf
+
+    doc = pymupdf.open(stream=pdf_bytes("Work Experience Section"), filetype="pdf")
+    page = doc[0]
+    png = _rendered_text_png("Skills Python Language")
+    page.insert_image(pymupdf.Rect(72, 500, 528, 700), stream=png)
+    data = doc.tobytes()
+    doc.close()
+    parsed = parse_document(data, file_type=".pdf")
+    lowered = parsed.text.lower()
+    assert "work experience section" in lowered
+    assert "skills python language" in lowered
+
+
+def test_full_page_image_matching_text_layer_is_not_duplicated():
+    import pymupdf
+
+    doc = pymupdf.open(stream=pdf_bytes("Hello CareerPilot Resume"), filetype="pdf")
+    png = doc[0].get_pixmap(dpi=180).tobytes("png")
+    doc[0].insert_image(doc[0].rect, stream=png)
+    data = doc.tobytes()
+    doc.close()
+    parsed = parse_document(data, file_type=".pdf")
+    assert parsed.lines.count("Hello CareerPilot Resume") == 1

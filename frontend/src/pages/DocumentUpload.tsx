@@ -509,12 +509,12 @@ export default function DocumentUpload({
         </p>
       )}
       <p id="upload-hint" className="small muted">
-        PDF / Markdown / TXT，最大 10 MiB。当前支持可复制文字的 PDF。
+        PDF / Markdown / TXT，最大 10 MiB。支持有文字层和带图片的 PDF。
       </p>
       <details className="upload-requirements">
         <summary>PDF 文件要求</summary>
         <p className="small muted">
-          含图片、头像或图形的 PDF 暂不支持，请先转换为纯文本或 Markdown。
+          系统会尝试识别图片中的文字。扫描页无法识别时，请上传清晰的 PDF 或改用 TXT、Markdown。
         </p>
       </details>
       {error && (
