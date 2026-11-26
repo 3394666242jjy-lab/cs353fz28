@@ -918,7 +918,14 @@ export interface components {
             /** Missing Information */
             missing_information: string[];
         };
-        /** PdfLocator */
+        /**
+         * PdfLocator
+         * @description PDF 定位：页码是权威，字符区间是可选精化。
+         *
+         *     ``char_start``/``char_end`` 相对**该页**提取文本（LF 归一化），0 起始、半开区间，
+         *     语义见 dev/19。刻意用页内偏移而不是全文偏移：全文偏移要跨越空白页记账，解析器一改
+         *     （例如 OCR 版本）就整体漂移。缺省时消费方只按页码定位，不允许按比例换算。
+         */
         PdfLocator: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -927,6 +934,10 @@ export interface components {
             kind: "pdf";
             /** Page */
             page: number;
+            /** Char Start */
+            char_start?: number | null;
+            /** Char End */
+            char_end?: number | null;
         };
         /** PendingInput */
         PendingInput: {
@@ -1102,7 +1113,14 @@ export interface components {
             checkpoint_id: string;
             answer: components["schemas"]["ResumeAnswer"];
         };
-        /** TextLocator */
+        /**
+         * TextLocator
+         * @description 文本定位：行号是权威，字符区间是可选精化。
+         *
+         *     ``char_start``/``char_end`` 相对解析后的归一化全文（LF 换行），0 起始、半开区间，
+         *     语义见 dev/19。M2 的 chunk 等于整行区间，因此这两个字段可以省略；一旦出现就必须
+         *     同时出现，并且能精确切出 quote。缺省时消费方退回行号，不允许按比例换算。
+         */
         TextLocator: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -1113,6 +1131,10 @@ export interface components {
             line_start: number;
             /** Line End */
             line_end: number;
+            /** Char Start */
+            char_start?: number | null;
+            /** Char End */
+            char_end?: number | null;
         };
         /** TokenResult */
         TokenResult: {

@@ -89,15 +89,17 @@ def test_headings_never_end_a_chunk_alone():
 
 
 def test_long_paragraph_is_never_split_mid_text():
-    """超预算段落不自切：整段自成 chunk，行区间覆盖全部三行。"""
+    """超预算段落不自切：整段自成 chunk，行区间覆盖全部三行。
+
+    切分阶段只给行号；字符区间在入库时由 ``char_span()`` 换算（见 dev/19），
+    因此这里断言 span 为空是契约的一部分，不是遗漏。
+    """
     lines = ["# 标题", "", "内容" * 200]
     chunks = chunk_document(lines, max_chars=100)
     assert len(chunks) == 1
-    assert chunks[0].locator.model_dump() == {
-        "kind": "text",
-        "line_start": 1,
-        "line_end": 3,
-    }
+    assert (chunks[0].locator.line_start, chunks[0].locator.line_end) == (1, 3)
+    assert chunks[0].locator.char_start is None
+    assert chunks[0].locator.char_end is None
     assert chunks[0].text == "\n".join(lines)
 
 

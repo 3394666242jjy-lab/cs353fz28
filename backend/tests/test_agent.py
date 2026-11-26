@@ -334,6 +334,8 @@ def test_schema_and_prompts_do_not_allow_user_identity_or_tools_to_be_model_cont
     assert assessment_payload["requirements"][1]["evidence"][0]["locator"] == {
         "kind": "pdf",
         "page": 3,
+        "char_start": None,
+        "char_end": None,
     }
 
 

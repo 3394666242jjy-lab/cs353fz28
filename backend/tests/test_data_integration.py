@@ -240,7 +240,10 @@ def test_pdf_index_and_analysis_with_real_mongo_and_qdrant(mongo_settings, tmp_p
         assert result["status"] == "ready" and result["matches"][0]["status"] == "supported"
         cited = result["matches"][0]["evidence_refs"][0]
         evidence = get_chunk(settings, user, cited["chunk_id"], 1)
-        assert evidence["locator"] == {"kind": "pdf", "page": 1}
+        # PDF 定位带页内字符区间（dev/19）：页码仍是权威，区间相对该页文本。
+        assert evidence["locator"]["kind"] == "pdf"
+        assert evidence["locator"]["page"] == 1
+        assert evidence["locator"]["char_end"] > evidence["locator"]["char_start"] >= 0
         assert evidence["text"] == "Python development"
     finally:
         headers = (

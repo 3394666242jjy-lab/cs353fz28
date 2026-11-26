@@ -1,0 +1,97 @@
+{
+  "arm": "hybrid",
+  "metric_version": "support-eval-v2",
+  "counts": {
+    "total": 12,
+    "decided": 12,
+    "undecided": 0,
+    "by_axis": {
+      "fully_supported": {
+        "count": 3,
+        "decided": 3,
+        "false_support": 0
+      },
+      "partially_supported": {
+        "count": 3,
+        "decided": 3,
+        "false_support": 0
+      },
+      "no_evidence": {
+        "count": 3,
+        "decided": 3,
+        "false_support": 0
+      },
+      "old_version": {
+        "count": 2,
+        "decided": 2,
+        "false_support": 0
+      },
+      "deleted": {
+        "count": 1,
+        "decided": 1,
+        "false_support": 0
+      }
+    }
+  },
+  "config_versions": [
+    "hybrid/w0.30/text-embedding-v4@1024/top5"
+  ],
+  "status_accuracy": 0.9166666666666666,
+  "false_support_rate": 0.0,
+  "over_refusal_rate": 0.0,
+  "stale_citation_rate": 0.0,
+  "citation_precision": 0.4,
+  "citation_recall": 1.0,
+  "numeric_anchor_rate": 0.0,
+  "numeric_anchor": {
+    "applicable": 1,
+    "covered": 0,
+    "failures": [
+      {
+        "item_id": "s_beta_04",
+        "missing": [
+          "300"
+        ]
+      }
+    ]
+  },
+  "confusion": {
+    "supported": {
+      "supported": 3,
+      "partial": 0,
+      "not_evidenced": 0
+    },
+    "partial": {
+      "supported": 0,
+      "partial": 3,
+      "not_evidenced": 0
+    },
+    "not_evidenced": {
+      "supported": 0,
+      "partial": 1,
+      "not_evidenced": 5
+    }
+  },
+  "context": {
+    "mean_chars": 2096.4,
+    "max_chars": 2527,
+    "p95_chars": 2403.0,
+    "mean_blocks": 5.0,
+    "truncated_items": 0
+  },
+  "cost": {
+    "input_tokens": 23834,
+    "output_tokens": 1257
+  },
+  "latency_ms": {
+    "count": 12,
+    "p50": 7116.0,
+    "p95": 7950.6,
+    "mean_embedding": 497.6,
+    "mean_store": 3282.6,
+    "mean_rerank": 0.2,
+    "mean_judge": 2986.4,
+    "retrieval_p50": 3697.3,
+    "retrieval_p95": 4089.4
+  }
+}

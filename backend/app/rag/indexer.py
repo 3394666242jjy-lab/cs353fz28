@@ -23,6 +23,7 @@ from app.rag.chunking import (
     parse_document,
 )
 from app.rag.embeddings import EmbeddingProvider, get_embedding_provider
+from app.rag.locators import pdf_locator, text_locator
 from app.rag.vector_store import (
     DENSE_VECTOR_NAME,
     ChunkPoint,
@@ -113,16 +114,35 @@ async def index_document(
     parsed = parse_document(raw, file_type=file_type)
     if parsed.pages is None:
         chunks = [
-            (chunk.text, chunk.locator)
+            (
+                chunk.text,
+                text_locator(
+                    text=parsed.text,
+                    lines=parsed.lines,
+                    line_start=chunk.locator.line_start,
+                    line_end=chunk.locator.line_end,
+                    quote=chunk.text,
+                ),
+            )
             for chunk in chunk_document(parsed.lines, max_chars=settings.chunk_max_chars)
         ]
         parser_version = PARSER_VERSION
     else:
-        chunks = [
-            (chunk.text, PdfLocator(kind="pdf", page=page))
-            for page, lines in enumerate(parsed.pages, start=1)
-            for chunk in chunk_document(lines, max_chars=settings.chunk_max_chars)
-        ]
+        chunks = []
+        for page_number, page_lines in enumerate(parsed.pages, start=1):
+            for chunk in chunk_document(page_lines, max_chars=settings.chunk_max_chars):
+                chunks.append(
+                    (
+                        chunk.text,
+                        pdf_locator(
+                            page=page_number,
+                            page_lines=page_lines,
+                            line_start=chunk.locator.line_start,
+                            line_end=chunk.locator.line_end,
+                            quote=chunk.text,
+                        ),
+                    )
+                )
         parser_version = PDF_PARSER_VERSION
     if not chunks:
         raise ValueError("文档没有可索引的文本")
