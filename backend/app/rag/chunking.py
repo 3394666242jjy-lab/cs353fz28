@@ -105,8 +105,10 @@ def _pixmap_to_ocr_lines(pix) -> list[str]:
     return lines
 
 
-def _ocr_page_image_rects(page) -> list[str]:
-    """对页面上每张栅格图片的矩形区域渲染并 OCR，按先上后左的顺序返回文字行。"""
+def _ocr_page_image_rects(page) -> tuple[list[str], bool]:
+    """按坐标顺序识别图片区域，并返回页面是否有可见的待识别图片。"""
+    import pymupdf
+
     rects = []
     seen = set()
     for info in page.get_images(full=True):
@@ -115,6 +117,7 @@ def _ocr_page_image_rects(page) -> list[str]:
         except Exception:  # 损坏或非标图片（如缺尺寸）跳过，不影响整页文字提取
             continue
         for rect in found:
+            rect = (rect * page.rotation_matrix) & page.rect
             if (
                 rect.is_empty
                 or rect.width < _OCR_MIN_IMAGE_SIDE
@@ -128,12 +131,10 @@ def _ocr_page_image_rects(page) -> list[str]:
     rects.sort(key=lambda item: (item.y0, item.x0))
     lines: list[str] = []
     for rect in rects:
-        pix = page.get_pixmap(clip=rect, dpi=_OCR_RENDER_DPI)
-        if max(pix.width, pix.height) > _OCR_MAX_RENDER_SIDE:
-            scale = _OCR_MAX_RENDER_SIDE / max(pix.width, pix.height)
-            pix = page.get_pixmap(clip=rect, dpi=max(72, int(_OCR_RENDER_DPI * scale)))
+        scale = min(_OCR_RENDER_DPI / 72, (_OCR_MAX_RENDER_SIDE - 2) / max(rect.width, rect.height))
+        pix = page.get_pixmap(clip=rect, matrix=pymupdf.Matrix(scale, scale))
         lines.extend(_pixmap_to_ocr_lines(pix))
-    return lines
+    return lines, bool(rects)
 
 
 def _normalized_line(line: str) -> str:
@@ -151,6 +152,7 @@ def _extract_pdf_pages(reader: PdfReader, raw: bytes) -> list[list[str]]:
     except Exception as error:  # 渲染失败按解析失败处理，不向上游抛裸异常
         raise DocumentParseError("PDF 图片渲染失败，无法读取图片内容") from error
     pages: list[list[str]] = []
+    unreadable_page: int | None = None
     try:
         for page_number, page in enumerate(reader.pages, start=1):
             text = (page.extract_text() or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -158,7 +160,10 @@ def _extract_pdf_pages(reader: PdfReader, raw: bytes) -> list[list[str]]:
             while lines and not lines[-1].strip():
                 lines.pop()
             known = {_normalized_line(line) for line in lines if line.strip()}
-            for ocr_line in _ocr_page_image_rects(doc[page_number - 1]):
+            ocr_lines, has_images = _ocr_page_image_rects(doc[page_number - 1])
+            if has_images and not (known or ocr_lines) and unreadable_page is None:
+                unreadable_page = page_number
+            for ocr_line in ocr_lines:
                 normalized = _normalized_line(ocr_line)
                 if normalized and normalized not in known:
                     known.add(normalized)
@@ -166,6 +171,10 @@ def _extract_pdf_pages(reader: PdfReader, raw: bytes) -> list[list[str]]:
             pages.append(lines)
     finally:
         doc.close()
+    if unreadable_page is not None and any(line.strip() for page in pages for line in page):
+        raise DocumentParseError(
+            f"PDF 第 {unreadable_page} 页没有可用的文字层，且本地 OCR 未能识别文字。"
+        )
     return pages
 
 

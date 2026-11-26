@@ -80,6 +80,8 @@ def _public_index_error(error: Exception) -> str:
         }
         if message in allowed:
             return message
+        if re.fullmatch(r"PDF 第 (\d+) 页没有可用的文字层，且本地 OCR 未能识别文字。", message):
+            return message + "请上传清晰的 PDF 或 UTF-8 TXT/Markdown。"
         page = re.fullmatch(
             r"PDF 第 (\d+) 页(?:可能含无法提取的扫描内容；请检查并上传有完整文本层的 PDF|"
             r"含无法核验的图形内容（含图片、头像或矢量图）；请上传仅含可复制文字的 PDF，"
@@ -151,18 +153,6 @@ def _load_vector_store() -> Any:
     except ImportError as exc:
         raise RuntimeError("向量库适配器（app.rag.vector_store，成员 C）尚未集成") from exc
     return get_vector_store
-
-
-def _save_extraction(
-    settings_obj: Any, user_id: str, document_id: str, version: int, raw: bytes, file_type: str
-) -> str:
-    """Persist PDF extraction with original page numbers; text formats stay plain text."""
-    from app.rag.chunking import parse_document
-
-    parsed = parse_document(raw, file_type=file_type)
-    if parsed.pages is not None:
-        return save_extracted_pages(settings_obj, user_id, document_id, version, parsed.pages)
-    return save_extracted_text(settings_obj, user_id, document_id, version, parsed.text)
 
 
 def _fail(
@@ -316,9 +306,15 @@ def run_indexing(
             )
 
         indexed = asyncio.run(_run_pipeline())
-        extracted_text_key = _save_extraction(
-            settings_obj, user_id, document_id, version, raw, Path(storage_key).suffix.lower()
-        )
+        extraction = indexed.extraction
+        if extraction.pages is not None:
+            extracted_text_key = save_extracted_pages(
+                settings_obj, user_id, document_id, version, extraction.pages
+            )
+        else:
+            extracted_text_key = save_extracted_text(
+                settings_obj, user_id, document_id, version, extraction.text
+            )
         save_indexed_version(
             settings_obj,
             user_id,

@@ -6,7 +6,7 @@ from io import BytesIO
 
 import pytest
 from pypdf import PdfWriter
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject, NumberObject
 
 from app.config import Settings
 from app.rag.chunking import DocumentParseError, parse_document
@@ -138,7 +138,14 @@ def pdf_with_image(*, image_size, with_text):
     image = DecodedStreamObject()
     image.set_data(bytes([0, 0, 0]))
     image.update(
-        {NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Image")}
+        {
+            NameObject("/Type"): NameObject("/XObject"),
+            NameObject("/Subtype"): NameObject("/Image"),
+            NameObject("/Width"): NumberObject(1),
+            NameObject("/Height"): NumberObject(1),
+            NameObject("/ColorSpace"): NameObject("/DeviceRGB"),
+            NameObject("/BitsPerComponent"): NumberObject(8),
+        }
     )
     font = DictionaryObject(
         {
@@ -178,6 +185,17 @@ def test_scan_only_page_without_ocr_result_is_rejected_but_mixed_pages_are_accep
     # 小于 8pt 的装饰小图直接跳过，不做 OCR
     parsed_small = parse_document(pdf_with_image(image_size=5, with_text=True), file_type=".pdf")
     assert parsed_small.text == "Experience"
+
+
+def test_unreadable_scan_page_is_reported_even_with_text_on_another_page():
+    writer = PdfWriter()
+    writer.append(BytesIO(pdf_bytes("Experience")))
+    writer.append(BytesIO(pdf_with_image(image_size=300, with_text=False)))
+    output = BytesIO()
+    writer.write(output)
+
+    with pytest.raises(DocumentParseError, match="第 2 页没有可用的文字层"):
+        parse_document(output.getvalue(), file_type=".pdf")
 
 
 def test_vector_outline_mixed_with_extractable_text_is_accepted():
