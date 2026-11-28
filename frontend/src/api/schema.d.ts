@@ -427,6 +427,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/knowledge/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Knowledge Sources
+         * @description 列出已发布的公共知识来源（按岗位过滤）；撤回与未发布版本不出现。
+         */
+        get: operations["list_knowledge_sources_api_v1_knowledge_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query Knowledge
+         * @description 公共知识引用查询：只返回已发布且岗位匹配的版本；无命中为空列表。
+         *
+         *     引用一律 ``reference_only``，供 Agent 学习参考通道消费，不能作为
+         *     个人经历证据（dev/16 双通道边界，对齐 #39）。
+         */
+        post: operations["query_knowledge_api_v1_knowledge_query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -679,6 +722,18 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** Envelope[KnowledgeQueryResult] */
+        Envelope_KnowledgeQueryResult_: {
+            data: components["schemas"]["KnowledgeQueryResult"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[KnowledgeSourcePage] */
+        Envelope_KnowledgeSourcePage_: {
+            data: components["schemas"]["KnowledgeSourcePage"];
+            /** Request Id */
+            request_id: string;
+        };
         /** Envelope[Liveness] */
         Envelope_Liveness_: {
             data: components["schemas"]["Liveness"];
@@ -868,6 +923,102 @@ export interface components {
             expected_version: number;
             /** Raw Jd */
             raw_jd: string;
+        };
+        /**
+         * KnowledgeQueryIn
+         * @description 公共知识引用查询入参；岗位与意图由服务端约束（dev/16），模型不能改写。
+         */
+        KnowledgeQueryIn: {
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "ai_product_manager" | "fullstack" | "agent_engineer";
+            /** Query */
+            query: string;
+            /**
+             * Top K
+             * @default 4
+             */
+            top_k: number;
+            /**
+             * Max Chars
+             * @default 6000
+             */
+            max_chars: number;
+            /** Topics */
+            topics?: string[];
+            /** Source Version */
+            source_version?: string | null;
+        };
+        /**
+         * KnowledgeQueryResult
+         * @description 引用查询结果：无命中时 items 为空列表（保留空引用，不编造来源）。
+         */
+        KnowledgeQueryResult: {
+            /** Items */
+            items: components["schemas"]["KnowledgeReference"][];
+            /**
+             * Notice
+             * @default 公共资料仅供知识解释与学习建议，不能证明用户具有某项经历。
+             */
+            notice: string;
+        };
+        /** KnowledgeReference */
+        KnowledgeReference: {
+            /** Source Id */
+            source_id: string;
+            /** Source Version */
+            source_version: string;
+            /** Source Url */
+            source_url: string;
+            /** Title */
+            title: string;
+            /** Summary */
+            summary: string;
+            /** Roles */
+            roles: ("ai_product_manager" | "fullstack" | "agent_engineer")[];
+            /**
+             * Content Kind
+             * @default editorial_summary
+             * @constant
+             */
+            content_kind: "editorial_summary";
+            /**
+             * Usage
+             * @default reference_only
+             * @constant
+             */
+            usage: "reference_only";
+        };
+        /** KnowledgeSourcePage */
+        KnowledgeSourcePage: {
+            /** Items */
+            items: components["schemas"]["KnowledgeSourceResult"][];
+        };
+        /**
+         * KnowledgeSourceResult
+         * @description 一个已发布公共知识来源的版本快照（列表接口返回，不含正文）。
+         */
+        KnowledgeSourceResult: {
+            /** Id */
+            id: string;
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+            /** Roles */
+            roles: ("ai_product_manager" | "fullstack" | "agent_engineer")[];
+            /** Topics */
+            topics: string[];
+            /** Version */
+            version: string;
+            /** Verified On */
+            verified_on: string;
+            /** Content Kind */
+            content_kind: string;
+            /** Usage */
+            usage: string;
         };
         /** Liveness */
         Liveness: {
@@ -3027,6 +3178,160 @@ export interface operations {
                 };
             };
             /** @description Evidence not found or not accessible */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid request parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_knowledge_sources_api_v1_knowledge_sources_get: {
+        parameters: {
+            query: {
+                role: "ai_product_manager" | "fullstack" | "agent_engineer";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_KnowledgeSourcePage_"];
+                };
+            };
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Invalid request parameters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Internal service error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Business module not implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Database unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    query_knowledge_api_v1_knowledge_query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeQueryIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_KnowledgeQueryResult_"];
+                };
+            };
+            /** @description Invalid credentials or expired session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Resource not found */
             404: {
                 headers: {
                     [name: string]: unknown;
